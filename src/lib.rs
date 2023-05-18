@@ -1,14 +1,11 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+mod error;
+pub use error::Error;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod nibbles;
+pub use nibbles::Nibbles;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+mod trie;
+pub use trie::Trie;
+
+mod state_trie;
+pub use state_trie::StateTrie;
