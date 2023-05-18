@@ -42,6 +42,10 @@ impl StorageTrie {
 }
 
 fn u256_to_bytes(value: U256) -> Bytes {
+    if value.is_zero() {
+        return Bytes::from(vec![0]);
+    }
+
     let mut vec = H256::from_uint(&value).as_bytes().to_vec();
     loop {
         if vec[0] == 0 {
