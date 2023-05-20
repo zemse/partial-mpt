@@ -5,7 +5,7 @@ use ethers::{
     types::{Bytes, H256},
     utils::{hex, keccak256, rlp, rlp::Rlp},
 };
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, str::FromStr};
 
 const EMPTY_ROOT_STR: &str = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421";
 const EMPTY_VALUE_STR: &str = "0x00";
@@ -31,6 +31,10 @@ impl Trie {
         }
     }
 
+    pub fn empty() -> Self {
+        Self::from_root(H256::from_str(EMPTY_ROOT_STR).unwrap())
+    }
+
     pub fn set_root(&mut self, root: H256) -> Result<(), Error> {
         if self.root.is_some() {
             return Err(Error::InternalError("root already present"));
@@ -48,6 +52,11 @@ impl Trie {
         let mut i = 0;
         let u4_vec = path.to_u4_vec();
         loop {
+            // if we got to an empty hash, means everything under this is empty
+            if hash_current == EMPTY_ROOT_STR.parse().unwrap() {
+                return Ok(EMPTY_VALUE_STR.parse().unwrap());
+            }
+
             let node_data = self
                 .nodes
                 .get(&hash_current)
@@ -80,6 +89,8 @@ impl Trie {
     }
 
     pub fn set_value(&mut self, path: Nibbles, new_value: Bytes) -> Result<(), Error> {
+        let empty_root = EMPTY_ROOT_STR.parse().unwrap();
+
         if self.root.is_none() {
             return Err(Error::InternalError("root not set"));
         }
@@ -92,37 +103,62 @@ impl Trie {
 
         // loop that traverses in, and finds a Leaf node or errors out
         loop {
-            let node_data = self
-                .nodes
-                .get(&hash_current)
-                .ok_or_else(|| Error::InternalError("node not present, please add a proof"))?;
+            if hash_current == empty_root {
+                // if we got to an empty hash, insert empty leaf here
+                let empty_leaf = NodeData::Leaf {
+                    key: path.slice(i)?,
+                    value: EMPTY_VALUE_STR.parse().unwrap(),
+                };
+                // this empty leaf would be changed to correct value later
+                self.nodes.insert(empty_root, empty_leaf);
+                break;
+            } else {
+                let node_hash = hash_current.clone();
 
-            match node_data {
-                NodeData::Leaf { key, value: _ } => {
-                    if key.to_u4_vec() == path.slice(i)?.to_u4_vec() {
-                        // TODO if value is set to zero, then this node has to be deleted
-                        break;
-                    } else {
-                        return Err(Error::InternalError("path mismatch"));
-                    }
+                let node_data = self
+                    .nodes
+                    .remove(&node_hash)
+                    .ok_or_else(|| Error::InternalError("node not present, please add a proof"))?;
+
+                self.nodes.insert(
+                    node_hash,
+                    match node_data {
+                        NodeData::Leaf { key, value } => {
+                            if key.to_u4_vec() != path.slice(i)?.to_u4_vec() {
+                                return Err(Error::InternalError("path mismatch"));
+                            }
+                            // found the leaf.
+                            // todo: if value is set to zero, then this node has to be deleted
+                            i += key.len();
+                            NodeData::Leaf { key, value }
+                        }
+                        NodeData::Branch(mut arr) => {
+                            let nibble = u4_vec[i] as usize;
+                            if arr[nibble].is_some() {
+                                hash_current = arr[nibble as usize].unwrap();
+                            } else {
+                                // set this to empty root for now, so that it will be assigned properly later
+                                arr[nibble] = Some(empty_root);
+                                hash_current = empty_root;
+                            }
+                            i += 1;
+                            NodeData::Branch(arr)
+                        }
+                        NodeData::Extension { key, node } => {
+                            hash_current = node.to_owned();
+                            i += key.len();
+                            NodeData::Extension { key, node }
+                        }
+                    },
+                );
+
+                // break if we have reached to the end of the path
+                if i == path.len() {
+                    break;
                 }
-                NodeData::Branch(arr) => {
-                    let nibble = u4_vec[i] as usize;
-                    if arr[nibble].is_some() {
-                        hash_current = arr[nibble as usize].unwrap();
-                    } else {
-                        // key value is not in the root, it is resolving to empty
-                        // TODO here we have to alter the trie to add an entry
-                        todo!()
-                    }
-                    i += 1;
-                }
-                NodeData::Extension { key, node } => {
-                    hash_current = node.to_owned();
-                    i += key.len();
-                }
+
+                hash_vec.push(hash_current);
             }
-            hash_vec.push(hash_current);
         }
 
         let mut hash_old = hash_vec.pop().unwrap();
@@ -1052,7 +1088,66 @@ mod tests {
             hex::encode(trie.root.unwrap()),
             "a8c351fd6909c41a53b213f026c3150740e6a0ce1229378b4da9cbde09981812"
         );
+    }
 
-        // assert!(false);
+    #[test]
+    pub fn test_trie_insert_new_leaf_on_root() {
+        let mut trie = Trie::empty();
+
+        trie.set_value(
+            Nibbles::from_raw_path(
+                "0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0" // hash(pad(5))
+                    .parse()
+                    .unwrap(),
+            ),
+            "0x05".parse().unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "45b9cf0531c2a25a0245e6729eb0d598c069c658d18f40971c1a335060a3108a"
+        );
+    }
+
+    #[test]
+    pub fn test_trie_insert_new_leaf_on_extension() {
+        let mut trie = Trie::new();
+
+        trie.load_proof(
+            Nibbles::from_raw_path_str("0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0"), // hash(pad(5))
+            "0x05".parse().unwrap(),
+            vec![
+                "0xf851a07d8f23b831e6f4d69ddbc6629dc8af2289ed1791a87a77de545468d8857d3f0a8080808080808080808080808080a0b1c4f7aff61e4142aadf9217f54c2f4f0c280ebb9fcd70b5eae55129905a113a80"
+                    .parse()
+                    .unwrap(),
+                "0xe2a0336b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db005"
+                    .parse()
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+
+        // ready made trie of 5->5 & 6->6
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "27b40440e189f435994e57d1a944cbcd8002910812a7eac1b331fcc17b31fcb1"
+        );
+
+        // now inserting 7->7
+        trie.set_value(
+            Nibbles::from_raw_path_str(
+                "0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688", // hash(pad(7))
+            ),
+            "0x07".parse().unwrap(),
+        )
+        .unwrap();
+
+        println!("{:?}", trie);
+
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "491b2cfba976b2e78bd9be3bc15c9964927205fc34c9954a4d61bbe8170ba533"
+        );
     }
 }
