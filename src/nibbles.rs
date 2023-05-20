@@ -131,17 +131,27 @@ impl Nibbles {
     }
 }
 
+fn fmt(val: Nibbles, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(
+        f,
+        "Nibbles({})",
+        val.0
+            .iter()
+            .map(|nibble| format!("{:x?}", nibble))
+            .collect::<Vec<_>>()
+            .join("")
+    )
+}
+
 impl fmt::Display for Nibbles {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Nibbles({})",
-            self.0
-                .iter()
-                .map(|nibble| format!("{}", nibble))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+        fmt(self.clone(), f)
+    }
+}
+
+impl fmt::Debug for Nibbles {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt(self.clone(), f)
     }
 }
 
