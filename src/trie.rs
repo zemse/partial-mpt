@@ -11,23 +11,151 @@ const EMPTY_ROOT_STR: &str = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc0
 const EMPTY_VALUE_STR: &str = "0x00";
 
 #[derive(Clone, Debug, EthDisplay, PartialEq)]
+pub struct Nodes(HashMap<H256, NodeData>);
+
+impl Nodes {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    pub fn get(&self, hash: &H256) -> Option<&NodeData> {
+        self.0.get(hash)
+    }
+
+    #[allow(dead_code)]
+    pub fn get_str(&self, hash_str: &str) -> Option<&NodeData> {
+        let hash = hash_str.parse::<H256>().unwrap();
+        self.get(&hash)
+    }
+
+    fn insert(&mut self, node_data: NodeData) -> Result<(H256, Option<NodeData>), Error> {
+        let key = node_data.hash()?;
+        Ok((key, self.0.insert(key, node_data)))
+    }
+
+    pub fn remove(&mut self, hash: &H256) -> Option<NodeData> {
+        self.0.remove(hash)
+    }
+
+    pub fn create_leaf(&mut self, key: Nibbles, value: Bytes) -> Result<H256, Error> {
+        let (hash_leaf, _) = self.insert(NodeData::Leaf { key, value })?;
+        Ok(hash_leaf)
+    }
+
+    pub fn create_branch_or_extension(
+        &mut self,
+        key_a: Nibbles,
+        value_a: Bytes,
+        key_b: Nibbles,
+        value_b: Bytes,
+    ) -> Result<NodeData, Error> {
+        let mut branch_node_arr: [Option<H256>; 17] = [None; 17];
+
+        let intersection = key_a.intersect(&key_b)?;
+
+        let key_a_prime = key_a.slice(intersection.len())?;
+        let key_b_prime = key_b.slice(intersection.len())?;
+
+        let nibble_a = key_a_prime.first_nibble() as usize;
+        let nibble_b = key_b_prime.first_nibble() as usize;
+
+        let hash_a = self.create_leaf(key_a_prime, value_a)?;
+        let hash_b = self.create_leaf(key_b_prime, value_b)?;
+
+        branch_node_arr[nibble_a] = Some(hash_a);
+        branch_node_arr[nibble_b] = Some(hash_b);
+
+        let branch = NodeData::Branch(branch_node_arr);
+
+        if intersection.len() > 0 {
+            let (branch_hash, _) = self.insert(branch)?;
+
+            Ok(NodeData::Extension {
+                key: intersection,
+                node: branch_hash,
+            })
+        } else {
+            Ok(branch)
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ConsecutiveList<T> {
+    current_index: usize,
+    list: Vec<T>,
+}
+
+impl<T: Clone> ConsecutiveList<T> {
+    pub fn new(initial_value: T) -> Self {
+        Self {
+            current_index: 0,
+            list: vec![initial_value],
+        }
+    }
+
+    pub fn current(&self) -> T {
+        self.list[self.current_index].clone()
+    }
+
+    pub fn set_next(&mut self, val: T) {
+        self.list.push(val);
+    }
+
+    pub fn go_next(&mut self) -> bool {
+        if self.list.len() == self.current_index + 1 {
+            false
+        } else {
+            self.current_index += 1;
+            true
+        }
+    }
+
+    pub fn go_back(&mut self) -> bool {
+        if self.list.len() == 1 {
+            false
+        } else {
+            self.current_index -= 1;
+            true
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn next(&self) -> Option<&T> {
+        if self.list.len() < self.current_index + 1 {
+            None
+        } else {
+            Some(&self.list[self.current_index])
+        }
+    }
+
+    pub fn prev(&self) -> Option<&T> {
+        if self.current_index == 0 {
+            None
+        } else {
+            Some(&self.list[self.current_index - 1])
+        }
+    }
+}
+
+#[derive(Clone, Debug, EthDisplay, PartialEq)]
 pub struct Trie {
-    pub root: Option<H256>,
-    nodes: HashMap<H256, NodeData>,
+    pub root: Option<H256>, // TODO private
+    nodes: Nodes,
 }
 
 impl Trie {
     pub fn new() -> Self {
         Trie {
             root: None,
-            nodes: HashMap::new(),
+            nodes: Nodes::new(),
         }
     }
 
     pub fn from_root(root: H256) -> Self {
         Trie {
             root: Some(root),
-            nodes: HashMap::new(),
+            nodes: Nodes::new(),
         }
     }
 
@@ -89,121 +217,122 @@ impl Trie {
     }
 
     pub fn set_value(&mut self, path: Nibbles, new_value: Bytes) -> Result<(), Error> {
-        let empty_root = EMPTY_ROOT_STR.parse().unwrap();
-
         if self.root.is_none() {
             return Err(Error::InternalError("root not set"));
         }
 
-        let mut hash_current = self.root.unwrap();
+        let path_u4_vec = path.to_u4_vec();
+        let mut hash = ConsecutiveList::new(self.root.unwrap());
+
+        // if trie is empty, insert first node at root
+        if hash.current() == EMPTY_ROOT_STR.parse().unwrap() {
+            let leaf = NodeData::Leaf {
+                key: path,
+                value: new_value,
+            };
+            let (hash_leaf, _) = self.nodes.insert(leaf)?;
+            self.root = Some(hash_leaf);
+            return Ok(());
+        }
+
+        // keep traversing down the trie until we get the final node and update it
         let mut i = 0;
-        let u4_vec = path.to_u4_vec();
-        let mut hash_vec = Vec::new();
-        hash_vec.push(hash_current);
-
-        // loop that traverses in, and finds a Leaf node or errors out
+        let mut hash_updated: H256;
         loop {
-            if hash_current == empty_root {
-                // if we got to an empty hash, insert empty leaf here
-                let empty_leaf = NodeData::Leaf {
-                    key: path.slice(i)?,
-                    value: EMPTY_VALUE_STR.parse().unwrap(),
-                };
-                // this empty leaf would be changed to correct value later
-                self.nodes.insert(empty_root, empty_leaf);
-                break;
-            } else {
-                let node_hash = hash_current.clone();
+            let mut current_node = self
+                .nodes
+                .remove(&hash.current())
+                .ok_or_else(|| Error::InternalError("node not present, please add a proof"))?;
 
-                let node_data = self
-                    .nodes
-                    .remove(&node_hash)
-                    .ok_or_else(|| Error::InternalError("node not present, please add a proof"))?;
-
-                self.nodes.insert(
-                    node_hash,
-                    match node_data {
-                        NodeData::Leaf { key, value } => {
-                            if key.to_u4_vec() != path.slice(i)?.to_u4_vec() {
-                                return Err(Error::InternalError("path mismatch"));
-                            }
-                            // found the leaf.
-                            // todo: if value is set to zero, then this node has to be deleted
-                            i += key.len();
-                            NodeData::Leaf { key, value }
+            current_node = match current_node {
+                NodeData::Leaf { key, value } => {
+                    let path_slice = path.slice(i)?;
+                    i += key.len();
+                    if key.to_u4_vec() == path_slice.to_u4_vec() {
+                        // path exactly matches, simply update value
+                        NodeData::Leaf {
+                            key,
+                            value: new_value.clone(),
                         }
-                        NodeData::Branch(mut arr) => {
-                            let nibble = u4_vec[i] as usize;
-                            if arr[nibble].is_some() {
-                                hash_current = arr[nibble as usize].unwrap();
-                            } else {
-                                // set this to empty root for now, so that it will be assigned properly later
-                                arr[nibble] = Some(empty_root);
-                                hash_current = empty_root;
-                            }
-                            i += 1;
-                            NodeData::Branch(arr)
-                        }
-                        NodeData::Extension { key, node } => {
-                            hash_current = node.to_owned();
-                            i += key.len();
-                            NodeData::Extension { key, node }
-                        }
-                    },
-                );
-
-                // break if we have reached to the end of the path
-                if i == path.len() {
-                    break;
+                    } else {
+                        // we have to hook both leaves under a branch
+                        let branch_or_extension = self.nodes.create_branch_or_extension(
+                            key,
+                            value,
+                            path_slice,
+                            new_value.clone(),
+                        )?;
+                        branch_or_extension
+                    }
+                    // todo: if value is set to zero, then this node has to be deleted
                 }
+                NodeData::Branch(mut arr) => {
+                    let nibble = path_u4_vec[i] as usize;
+                    i += 1;
+                    if arr[nibble].is_some() {
+                        // set next for traversing down the branch
+                        hash.set_next(arr[nibble as usize].unwrap())
+                    } else {
+                        // create a leaf and assign to the branch
+                        let path_slice = path.slice(i)?;
+                        i += path_slice.len();
+                        let leaf_hash = self.nodes.create_leaf(path_slice, new_value.clone())?;
+                        arr[nibble] = Some(leaf_hash);
+                    }
+                    NodeData::Branch(arr)
+                }
+                NodeData::Extension { key, node } => {
+                    println!("> into extension");
+                    hash.set_next(node.to_owned());
+                    // println!("hash_current updated to: {}", hash_current);
+                    i += key.len();
+                    NodeData::Extension { key, node }
+                }
+            };
 
-                hash_vec.push(hash_current);
+            (hash_updated, _) = self.nodes.insert(current_node)?;
+
+            // if we got nothing to further traverse down, exit the loop
+            if !hash.go_next() {
+                assert_eq!(i, path.len(), "path will be traversed completely");
+                break;
             }
         }
 
-        let mut hash_old = hash_vec.pop().unwrap();
-        let mut leaf_node = self
-            .nodes
-            .remove(&hash_old)
-            .ok_or_else(|| Error::InternalError("leaf found but still got None somehow"))?;
-        leaf_node.set_value_on_leaf(new_value)?;
-        let mut hash_new = leaf_node.hash()?;
-        self.nodes.insert(hash_new, leaf_node);
-
-        // loop that traverses out
+        // keep traversing up the trie while updating the hashes until we get to the root
         loop {
-            if let Some(hash_old_parent) = hash_vec.pop() {
+            if let Some(hash_old_parent) = hash.prev() {
                 let mut parent_node = self.nodes.remove(&hash_old_parent).ok_or_else(|| {
+                    // todo remove this
                     Error::InternalError("parent found but still got None somehow")
                 })?;
                 parent_node = match parent_node {
                     NodeData::Leaf { key: _, value: _ } => {
-                        return Err(Error::InternalError(
-                            "we got leaf again, this should ideally not happen",
-                        ))
+                        unreachable!()
                     }
                     NodeData::Branch(mut arr) => {
+                        // update the hash at correct location in parent branch
                         let some_index = arr
                             .iter()
-                            .position(|el| el.is_some() && el.unwrap() == hash_old);
+                            .position(|el| el.is_some() && el.unwrap() == hash.current());
                         if some_index.is_none() {
                             return Err(Error::InternalError(
+                                // todo remove this
                                 "hash not found in parent node, this should ideally not happen",
                             ));
                         }
-                        arr[some_index.unwrap()] = Some(hash_new);
+                        arr[some_index.unwrap()] = Some(hash_updated);
                         NodeData::Branch(arr)
                     }
                     NodeData::Extension { key, node: _ } => NodeData::Extension {
                         key,
-                        node: hash_new,
+                        node: hash_updated,
                     },
                 };
-                hash_old = hash_old_parent;
-                hash_new = parent_node.hash()?;
-                self.nodes.insert(hash_new, parent_node);
+                (hash_updated, _) = self.nodes.insert(parent_node)?;
+                hash.go_back();
             } else {
-                self.root = Some(hash_new);
+                self.root = Some(hash_updated);
                 break;
             }
         }
@@ -268,7 +397,7 @@ impl Trie {
 
             let some_node_data_stored = self.nodes.get(&hash_node_data);
             if some_node_data_stored.is_none() {
-                self.nodes.insert(hash_node_data, node_data.clone());
+                self.nodes.insert(node_data.clone())?;
             }
 
             match node_data {
@@ -298,11 +427,6 @@ impl Trie {
 
         Ok(())
     }
-
-    // useful for reducing verticle length of testing code
-    pub fn nodes_get(&self, hash: &str) -> Option<&NodeData> {
-        self.nodes.get(&hash.parse().unwrap())
-    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -314,6 +438,47 @@ pub enum NodeData {
 }
 
 impl NodeData {
+    pub fn hash(&self) -> Result<H256, Error> {
+        Ok(H256::from(keccak256(self.to_raw_rlp()?)))
+    }
+
+    #[allow(dead_code)]
+    pub fn is_leaf(&self) -> bool {
+        match self {
+            NodeData::Leaf { .. } => true,
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_branch(&self) -> bool {
+        match self {
+            NodeData::Branch(_) => true,
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_extension(&self) -> bool {
+        match self {
+            NodeData::Extension { .. } => true,
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn set_value_on_leaf(&mut self, new_value: Bytes) -> Result<(), Error> {
+        match self {
+            NodeData::Leaf { key: _, value } => {
+                *value = new_value.clone();
+                Ok(())
+            }
+            _ => Err(Error::InternalError(
+                "set_value_on_leaf is only valid on leaf nodes",
+            )),
+        }
+    }
+
     pub fn from_raw_rlp(raw: Bytes) -> Result<Self, Error> {
         let rlp = Rlp::new(&raw);
         let num_items = rlp.item_count()?;
@@ -352,10 +517,6 @@ impl NodeData {
         }
     }
 
-    pub fn hash(&self) -> Result<H256, Error> {
-        Ok(H256::from(keccak256(self.to_raw_rlp()?)))
-    }
-
     pub fn to_raw_rlp(&self) -> Result<Bytes, Error> {
         let mut rlp_stream = rlp::RlpStream::new();
         match self {
@@ -386,18 +547,6 @@ impl NodeData {
             }
         }
         Ok(Bytes::from(rlp_stream.out().to_vec()))
-    }
-
-    pub fn set_value_on_leaf(&mut self, new_value: Bytes) -> Result<(), Error> {
-        match self {
-            NodeData::Leaf { key: _, value } => {
-                *value = new_value.clone();
-                Ok(())
-            }
-            _ => Err(Error::InternalError(
-                "set_value_on_leaf is only valid on leaf nodes",
-            )),
-        }
     }
 }
 
@@ -685,7 +834,8 @@ mod tests {
             ])
         );
         assert_eq!(
-            trie.nodes_get("0xe97150c3ed221a6f46bdcd44e8a2d44825bc781fa48f797e9df2f8ceff52a43e")
+            trie.nodes
+                .get_str("0xe97150c3ed221a6f46bdcd44e8a2d44825bc781fa48f797e9df2f8ceff52a43e")
                 .unwrap()
                 .to_owned(),
             NodeData::Leaf {
@@ -697,7 +847,8 @@ mod tests {
             }
         );
         assert!(trie
-            .nodes_get("0x9487c8e7f28469b9f72cd6be094b555c3882c0653f11b208ff76bf8caee50432")
+            .nodes
+            .get_str("0x9487c8e7f28469b9f72cd6be094b555c3882c0653f11b208ff76bf8caee50432")
             .is_none());
 
         println!("trie {:#?}", trie);
@@ -765,10 +916,12 @@ mod tests {
             ])
         );
         assert!(trie
-            .nodes_get("0xc2af0751112c3efa2873802b452283ab1e2c60fde148a2f9e482ed03b8947e15")
+            .nodes
+            .get_str("0xc2af0751112c3efa2873802b452283ab1e2c60fde148a2f9e482ed03b8947e15")
             .is_none());
         assert_eq!(
-            trie.nodes_get("0xb3e6ad355d7116d0b4173e75e4c760082c8870e3b5b746cfadfea7101e834cc2")
+            trie.nodes
+                .get_str("0xb3e6ad355d7116d0b4173e75e4c760082c8870e3b5b746cfadfea7101e834cc2")
                 .unwrap()
                 .to_owned(),
             NodeData::Extension {
@@ -779,7 +932,8 @@ mod tests {
             }
         );
         assert_eq!(
-            trie.nodes_get("0xe46db0426b9d34c7b2df7baf0480777946e6b5b74a0572592b0229a4edaed944")
+            trie.nodes
+                .get_str("0xe46db0426b9d34c7b2df7baf0480777946e6b5b74a0572592b0229a4edaed944")
                 .unwrap()
                 .to_owned(),
             NodeData::Branch([
@@ -811,10 +965,12 @@ mod tests {
             ])
         );
         assert!(trie
-            .nodes_get("0x0c104f2019963f0df89d54742b14cd0ad7418cb208e9bc69bf80cb296926ffe9")
+            .nodes
+            .get_str("0x0c104f2019963f0df89d54742b14cd0ad7418cb208e9bc69bf80cb296926ffe9")
             .is_none());
         assert_eq!(
-            trie.nodes_get("0x4efd8a29c04796b9c9b13af2740864e48851a89ef4292575ab5f69b3a52c06c0")
+            trie.nodes
+                .get_str("0x4efd8a29c04796b9c9b13af2740864e48851a89ef4292575ab5f69b3a52c06c0")
                 .unwrap()
                 .to_owned(),
             NodeData::Leaf {
@@ -893,7 +1049,8 @@ mod tests {
         );
 
         assert_eq!(
-            trie.nodes_get("0x3f39d7bf4be8677b2d7db8f944e618380c443e7615adddd29b4cba751d7acdc5")
+            trie.nodes
+                .get_str("0x3f39d7bf4be8677b2d7db8f944e618380c443e7615adddd29b4cba751d7acdc5")
                 .unwrap()
                 .to_owned(),
             NodeData::Leaf {
@@ -906,7 +1063,8 @@ mod tests {
         );
 
         assert_eq!(
-            trie.nodes_get("0x55037b5dac295c1605ec14cf282314a2870cbf448e24cf0cbc1b46fc09ad731e")
+            trie.nodes
+                .get_str("0x55037b5dac295c1605ec14cf282314a2870cbf448e24cf0cbc1b46fc09ad731e")
                 .unwrap()
                 .to_owned(),
             NodeData::Leaf {
@@ -1111,7 +1269,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_trie_insert_new_leaf_on_extension() {
+    pub fn test_trie_insert_new_leaf_on_branch() {
         let mut trie = Trie::new();
 
         trie.load_proof(
@@ -1129,6 +1287,7 @@ mod tests {
         .unwrap();
 
         // ready made trie of 5->5 & 6->6
+        println!("trie before {:#?}", trie);
         assert_eq!(
             hex::encode(trie.root.unwrap()),
             "27b40440e189f435994e57d1a944cbcd8002910812a7eac1b331fcc17b31fcb1"
@@ -1143,11 +1302,46 @@ mod tests {
         )
         .unwrap();
 
-        println!("{:?}", trie);
+        println!("trie after {:?}", trie);
 
         assert_eq!(
             hex::encode(trie.root.unwrap()),
             "491b2cfba976b2e78bd9be3bc15c9964927205fc34c9954a4d61bbe8170ba533"
+        );
+    }
+
+    #[test]
+    pub fn test_trie_insert_new_leaf_on_leaf_1() {
+        // create a trie with 3->3 and then insert 5->5.
+        let mut trie = Trie::empty();
+        trie.set_value(
+            Nibbles::from_raw_path_str(
+                "0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b", // hash(pad(3))
+            ),
+            "0x03".parse().unwrap(),
+        )
+        .unwrap();
+
+        println!("trie before {:#?}", trie);
+
+        assert!(
+            trie.nodes.get(&trie.root.unwrap()).unwrap().is_leaf(),
+            "root is leaf"
+        );
+
+        trie.set_value(
+            Nibbles::from_raw_path_str(
+                "0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0", // hash(pad(5))
+            ),
+            "0x05".parse().unwrap(),
+        )
+        .unwrap();
+
+        println!("trie after {:#?}", trie);
+
+        assert!(
+            trie.nodes.get(&trie.root.unwrap()).unwrap().is_branch(),
+            "root is now a branch"
         );
     }
 }

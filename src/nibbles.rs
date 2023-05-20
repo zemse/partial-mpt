@@ -18,6 +18,10 @@ fn u8_to_u4_vec(u8_vec: Vec<u8>) -> Vec<u8> {
 }
 
 impl Nibbles {
+    pub fn first_nibble(&self) -> u8 {
+        self.0[0]
+    }
+
     pub fn from_address(address: Address) -> Result<Nibbles, Error> {
         Ok(Self::from_raw_path(Bytes::from(
             H256::from(keccak256(address)).as_bytes().to_vec(),
