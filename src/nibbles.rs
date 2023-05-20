@@ -126,6 +126,28 @@ impl Nibbles {
         Ok(Self(nibbles_vec))
     }
 
+    pub fn intersect(&self, other: &Self) -> Result<Self, Error> {
+        let self_vec = self.to_u4_vec();
+        let other_vec = other.to_u4_vec();
+
+        if self_vec.len() != other_vec.len() {
+            return Err(Error::InternalError(
+                "cannot intersect nibbles because lengths differ",
+            ));
+        }
+
+        let mut intersect_vec = Vec::new();
+        for i in 0..self_vec.len() {
+            if self_vec[i] == other_vec[i] {
+                intersect_vec.push(self_vec[i]);
+            } else {
+                break;
+            }
+        }
+
+        Self::from_u4_vec(intersect_vec)
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -359,5 +381,38 @@ mod tests {
             hex::encode(nibbles.to_raw_path()),
             "405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace"
         );
+    }
+
+    #[test]
+    pub fn test_intersect_1() {
+        let nibbles1 = Nibbles::from_raw_path("123456".parse().unwrap());
+        let nibbles2 = Nibbles::from_raw_path("654321".parse().unwrap());
+        let intersected = nibbles1.intersect(&nibbles2).unwrap();
+        assert_eq!(intersected.len(), 0);
+    }
+
+    #[test]
+    pub fn test_intersect_2() {
+        let nibbles1 = Nibbles::from_raw_path("123456".parse().unwrap());
+        let nibbles2 = Nibbles::from_raw_path("123156".parse().unwrap());
+        let intersected = nibbles1.intersect(&nibbles2).unwrap();
+        assert_eq!(intersected.len(), 3);
+        assert_eq!(intersected.to_u4_vec(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    pub fn test_intersect_3() {
+        let nibbles1 = Nibbles::from_raw_path("123456".parse().unwrap());
+        let nibbles2 = Nibbles::from_raw_path("123456".parse().unwrap());
+        let intersected = nibbles1.intersect(&nibbles2).unwrap();
+        assert_eq!(intersected.len(), 6);
+        assert_eq!(intersected.to_u4_vec(), vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    pub fn test_intersect_4() {
+        let nibbles1 = Nibbles::from_raw_path("123456".parse().unwrap());
+        let nibbles2 = Nibbles::from_raw_path("12345678".parse().unwrap());
+        assert!(nibbles1.intersect(&nibbles2).is_err());
     }
 }
