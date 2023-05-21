@@ -1,11 +1,9 @@
 mod error;
-pub use error::Error;
-
 mod nibbles;
-pub use nibbles::Nibbles;
-
-mod trie;
-pub use trie::Trie;
-
+mod nodes;
 mod state_trie;
+mod trie;
+mod utils;
+
+pub use error::Error;
 pub use state_trie::StateTrie;

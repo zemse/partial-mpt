@@ -1,4 +1,4 @@
-use crate::{Error, Nibbles, Trie};
+use crate::{nibbles::Nibbles, trie::Trie, Error};
 use ethers::{
     prelude::EthDisplay,
     types::{BigEndianHash, Bytes, H256, U256},

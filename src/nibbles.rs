@@ -38,10 +38,12 @@ impl Nibbles {
         )))
     }
 
+    #[allow(dead_code)]
     pub fn from_raw_path_str(str: &str) -> Self {
         Self::from_raw_path(str.parse::<Bytes>().unwrap())
     }
 
+    #[allow(dead_code)]
     pub fn from_encoded_path_str(str: &str) -> Result<Self, Error> {
         Self::from_encoded_path(str.parse::<Bytes>().unwrap())
     }
