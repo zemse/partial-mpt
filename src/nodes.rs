@@ -55,29 +55,39 @@ impl Nodes {
 
         let intersection = key_a.intersect(&key_b)?;
 
-        let key_a_prime = key_a.slice(intersection.len())?;
-        let key_b_prime = key_b.slice(intersection.len())?;
-
-        let nibble_a = key_a_prime.first_nibble() as usize;
-        let nibble_b = key_b_prime.first_nibble() as usize;
-
-        let hash_a = self.create_leaf(key_a_prime, value_a)?;
-        let hash_b = self.create_leaf(key_b_prime, value_b)?;
-
-        branch_node_arr[nibble_a] = Some(hash_a);
-        branch_node_arr[nibble_b] = Some(hash_b);
-
-        let branch = NodeData::Branch(branch_node_arr);
-
         if intersection.len() > 0 {
-            let (branch_hash, _) = self.insert(branch)?;
+            let key_a_prime = key_a.slice(intersection.len())?;
+            let key_b_prime = key_b.slice(intersection.len())?;
+
+            let nibble_a = key_a_prime.first_nibble() as usize;
+            let nibble_b = key_b_prime.first_nibble() as usize;
+
+            let hash_a = self.create_leaf(key_a_prime, value_a)?;
+            let hash_b = self.create_leaf(key_b_prime, value_b)?;
+
+            branch_node_arr[nibble_a] = Some(hash_a);
+            branch_node_arr[nibble_b] = Some(hash_b);
+
+            let (branch_hash, _) = self.insert(NodeData::Branch(branch_node_arr))?;
 
             Ok(NodeData::Extension {
                 key: intersection,
                 node: branch_hash,
             })
         } else {
-            Ok(branch)
+            let nibble_a = key_a.first_nibble() as usize;
+            let nibble_b = key_b.first_nibble() as usize;
+
+            let key_a_prime = key_a.slice(1)?;
+            let key_b_prime = key_b.slice(1)?;
+
+            let hash_a = self.create_leaf(key_a_prime, value_a)?;
+            let hash_b = self.create_leaf(key_b_prime, value_b)?;
+
+            branch_node_arr[nibble_a] = Some(hash_a);
+            branch_node_arr[nibble_b] = Some(hash_b);
+
+            Ok(NodeData::Branch(branch_node_arr))
         }
     }
 }
