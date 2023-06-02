@@ -1,12 +1,11 @@
-use crate::{nibbles::Nibbles, trie::Trie, Error};
+use crate::{nibbles::Nibbles, nodes::LeafValue, trie::Trie, Error};
 use ethers::{
-    prelude::EthDisplay,
     types::{Address, Bytes, H256, U256},
     utils::rlp::{Rlp, RlpStream},
 };
 
-#[derive(Debug, Clone, EthDisplay, PartialEq)]
-pub struct AccountTrie(Trie);
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountTrie(Trie<AccountData>);
 
 impl AccountTrie {
     pub fn new() -> Self {
@@ -27,8 +26,7 @@ impl AccountTrie {
 
     pub fn get_account_data(&self, address: Address) -> Result<AccountData, Error> {
         let path = Nibbles::from_address(address)?;
-        let raw_account = self.0.get_value(path)?;
-        AccountData::from_raw_rlp(raw_account)
+        self.0.get_value(path)
     }
 
     pub fn set_account_data(
@@ -37,28 +35,28 @@ impl AccountTrie {
         new_value: AccountData,
     ) -> Result<(), Error> {
         let path = Nibbles::from_address(address)?;
-        self.0.set_value(path, new_value.to_raw_rlp()?)
+        self.0.set_value(path, new_value)
     }
 
     pub fn set_nonce(&mut self, address: Address, new_nonce: U256) -> Result<(), Error> {
         let mut data = self.get_account_data(address)?;
         data.nonce = new_nonce;
         let path = Nibbles::from_address(address)?;
-        self.0.set_value(path, data.to_raw_rlp()?)
+        self.0.set_value(path, data)
     }
 
     pub fn set_balance(&mut self, address: Address, new_balance: U256) -> Result<(), Error> {
         let mut data = self.get_account_data(address)?;
         data.balance = new_balance;
         let path = Nibbles::from_address(address)?;
-        self.0.set_value(path, data.to_raw_rlp()?)
+        self.0.set_value(path, data)
     }
 
     pub fn set_code_hash(&mut self, address: Address, new_code_hash: H256) -> Result<(), Error> {
         let mut data = self.get_account_data(address)?;
         data.code_hash = new_code_hash;
         let path = Nibbles::from_address(address)?;
-        self.0.set_value(path, data.to_raw_rlp()?)
+        self.0.set_value(path, data)
     }
 
     pub fn load_proof(
@@ -68,11 +66,11 @@ impl AccountTrie {
         proof: Vec<Bytes>,
     ) -> Result<(), Error> {
         let path = Nibbles::from_address(address)?;
-        self.0.load_proof(path, value.to_raw_rlp()?, proof)
+        self.0.load_proof(path, value, proof)
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct AccountData {
     pub nonce: U256,
     pub balance: U256,
@@ -80,8 +78,8 @@ pub struct AccountData {
     pub code_hash: H256,
 }
 
-impl AccountData {
-    pub fn from_raw_rlp(raw: Bytes) -> Result<Self, Error> {
+impl LeafValue for AccountData {
+    fn from_raw_rlp(raw: Bytes) -> Result<Self, Error> {
         let rlp = Rlp::new(&raw);
         Ok(Self {
             nonce: rlp.val_at(0)?,
@@ -91,7 +89,7 @@ impl AccountData {
         })
     }
 
-    pub fn to_raw_rlp(&self) -> Result<Bytes, Error> {
+    fn to_raw_rlp(&self) -> Result<Bytes, Error> {
         let mut rlp_stream = RlpStream::new();
         rlp_stream.begin_list(4);
         rlp_stream.append(&self.nonce);
@@ -104,7 +102,7 @@ impl AccountData {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccountData, AccountTrie, Address, U256};
+    use super::{AccountData, AccountTrie, Address, LeafValue, U256};
     use ethers::core::utils::hex;
     use ethers::utils::parse_ether;
 

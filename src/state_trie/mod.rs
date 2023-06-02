@@ -1,8 +1,5 @@
 use crate::Error;
-use ethers::{
-    prelude::EthDisplay,
-    types::{Address, EIP1186ProofResponse, H256, U256},
-};
+use ethers::types::{Address, EIP1186ProofResponse, H256, U256};
 use std::collections::HashMap;
 
 mod account_trie;
@@ -11,7 +8,7 @@ pub use account_trie::{AccountData, AccountTrie};
 mod storage_trie;
 pub use storage_trie::StorageTrie;
 
-#[derive(Clone, Debug, EthDisplay, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StateTrie {
     pub account_trie: AccountTrie,
     storage_tries: HashMap<H256, StorageTrie>,
@@ -164,7 +161,7 @@ mod tests {
             "60bfaa2e6e61adcd645ce3aefc05c3bda2ed31f95fdd8bd5422dc2b8c78ae909"
         );
 
-        println!("before {}", trie);
+        println!("before {:?}", trie);
 
         trie.account_trie
             .set_nonce(
@@ -193,7 +190,7 @@ mod tests {
         )
         .unwrap();
 
-        println!("after {}", trie);
+        println!("after {:?}", trie);
 
         assert_eq!(
             hex::encode(trie.root().unwrap()),
