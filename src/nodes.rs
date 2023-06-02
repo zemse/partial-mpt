@@ -14,6 +14,13 @@ use ethers::{
 
 use crate::{nibbles::Nibbles, Error};
 
+pub trait LeafValue: Clone + Debug + Default + PartialEq {
+    fn from_raw_rlp(raw: Bytes) -> Result<Self, Error>
+    where
+        Self: Sized;
+    fn to_raw_rlp(&self) -> Result<Bytes, Error>;
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Nodes<V: LeafValue>(HashMap<H256, NodeData<V>>);
 
@@ -92,13 +99,6 @@ impl<V: LeafValue> Nodes<V> {
             Ok(NodeData::Branch(branch_node_arr))
         }
     }
-}
-
-pub trait LeafValue: Debug + Clone + PartialEq + Default {
-    fn from_raw_rlp(raw: Bytes) -> Result<Self, Error>
-    where
-        Self: Sized;
-    fn to_raw_rlp(&self) -> Result<Bytes, Error>;
 }
 
 #[derive(Clone, PartialEq)]

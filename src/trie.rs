@@ -8,21 +8,27 @@ use ethers::{
     types::{Bytes, H256},
     utils::keccak256,
 };
-use std::{fmt::Debug, str::FromStr};
+use std::{fmt::Debug, marker::PhantomData, str::FromStr};
 
 const EMPTY_ROOT_STR: &str = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421";
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Trie<V: LeafValue> {
-    pub root: Option<H256>, // TODO private
-    nodes: Nodes<V>,
+pub trait MptKey: Clone + Debug + PartialEq {
+    fn to_nibbles(&self) -> Result<Nibbles, Error>;
 }
 
-impl<V: LeafValue> Trie<V> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Trie<K: MptKey, V: LeafValue> {
+    root: Option<H256>,
+    nodes: Nodes<V>,
+    _marker: PhantomData<K>,
+}
+
+impl<K: MptKey, V: LeafValue> Trie<K, V> {
     pub fn new() -> Self {
         Trie {
             root: None,
             nodes: Nodes::new(),
+            _marker: PhantomData,
         }
     }
 
@@ -30,6 +36,7 @@ impl<V: LeafValue> Trie<V> {
         Trie {
             root: Some(root),
             nodes: Nodes::new(),
+            _marker: PhantomData,
         }
     }
 
@@ -38,6 +45,7 @@ impl<V: LeafValue> Trie<V> {
         Self::from_root(H256::from_str(EMPTY_ROOT_STR).unwrap())
     }
 
+    // TODO remove this method
     pub fn set_root(&mut self, root: H256) -> Result<(), Error> {
         if self.root.is_some() {
             return Err(Error::InternalError("root already present"));
@@ -46,10 +54,16 @@ impl<V: LeafValue> Trie<V> {
         Ok(())
     }
 
-    pub fn get_value(&self, path: Nibbles) -> Result<V, Error> {
+    pub fn root(&self) -> Option<H256> {
+        self.root
+    }
+
+    pub fn get(&self, key: K) -> Result<V, Error> {
         if self.root.is_none() {
             return Err(Error::InternalError("root not set"));
         }
+
+        let path = key.to_nibbles()?;
 
         let mut hash_current = self.root.unwrap();
         let mut i = 0;
@@ -91,10 +105,12 @@ impl<V: LeafValue> Trie<V> {
         }
     }
 
-    pub fn set_value(&mut self, path: Nibbles, new_value: V) -> Result<(), Error> {
+    pub fn set(&mut self, key: K, new_value: V) -> Result<(), Error> {
         if self.root.is_none() {
             return Err(Error::InternalError("root not set"));
         }
+
+        let path = key.to_nibbles()?;
 
         let path_u4_vec = path.to_u4_vec();
         let mut hash = ConsecutiveList::new(self.root.unwrap());
@@ -213,7 +229,8 @@ impl<V: LeafValue> Trie<V> {
         Ok(())
     }
 
-    pub fn load_proof(&mut self, key_: Nibbles, value_: V, proof: Vec<Bytes>) -> Result<(), Error> {
+    // TODO remove the _ postfix
+    pub fn load_proof(&mut self, key_: K, value_: V, proof: Vec<Bytes>) -> Result<(), Error> {
         if proof.len() == 0 {
             if self.root.is_some() {
                 if self.root.unwrap() != EMPTY_ROOT_STR.parse().unwrap() {
@@ -238,7 +255,7 @@ impl<V: LeafValue> Trie<V> {
         }
 
         let mut root = self.root.unwrap();
-        let mut key_current = key_.clone();
+        let mut key_current = key_.clone().to_nibbles()?;
 
         for (i, proof_entry) in proof.iter().enumerate() {
             let hash_node_data = H256::from(keccak256(proof_entry.clone()));
@@ -299,12 +316,18 @@ impl<V: LeafValue> Trie<V> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Nibbles, NodeData, Trie};
+    use super::{MptKey, Nibbles, NodeData, Trie};
     use ethers::utils::hex;
+
+    impl MptKey for Nibbles {
+        fn to_nibbles(&self) -> Result<Nibbles, crate::Error> {
+            Ok(self.to_owned())
+        }
+    }
 
     #[test]
     pub fn test_trie_new_empty_1() {
-        let mut trie = Trie::<u64>::from_root(
+        let mut trie = Trie::<Nibbles, u64>::from_root(
             "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
                 .parse()
                 .unwrap(),
@@ -333,7 +356,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_new_one_element_1() {
-        let mut trie = Trie::<u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path(
@@ -370,7 +393,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_new_two_element_1() {
-        let mut trie = Trie::<u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str("0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0" // hash(pad(5))
@@ -445,7 +468,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_new_three_element_1() {
-        let mut trie = Trie::<u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -576,7 +599,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_load_two_proofs_1() {
-        let mut trie = Trie::<u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -669,8 +692,8 @@ mod tests {
     }
 
     #[test]
-    pub fn test_trie_get_value_1() {
-        let mut trie = Trie::<u64>::new();
+    pub fn test_trie_get_1() {
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -695,14 +718,14 @@ mod tests {
         ).unwrap();
 
         let val = trie
-            .get_value(Nibbles::from_raw_path_str(
+            .get(Nibbles::from_raw_path_str(
                 "0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace", // hash(pad(2))
             ))
             .unwrap();
         assert_eq!(val, 4);
 
         let val2 = trie
-            .get_value(Nibbles::from_raw_path_str(
+            .get(Nibbles::from_raw_path_str(
                 "0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b", // hash(pad(2))
             ))
             .unwrap();
@@ -710,8 +733,8 @@ mod tests {
     }
 
     #[test]
-    pub fn test_trie_get_value_2() {
-        let mut trie = Trie::<u64>::new();
+    pub fn test_trie_get_2() {
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -736,7 +759,7 @@ mod tests {
         .unwrap();
 
         let val = trie
-            .get_value(Nibbles::from_raw_path_str(
+            .get(Nibbles::from_raw_path_str(
                 "0xc65a7bb8d6351c1cf70c95a316cc6a92839c986682d98bc35f958f4883f9d2a8", // hash(pad(5))
             ))
             .unwrap();
@@ -744,8 +767,8 @@ mod tests {
     }
 
     #[test]
-    pub fn test_trie_get_value_3_value_not_proved() {
-        let mut trie = Trie::<u64>::new();
+    pub fn test_trie_get_3_value_not_proved() {
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -759,15 +782,15 @@ mod tests {
          ).unwrap();
 
         assert!(trie
-            .get_value(Nibbles::from_raw_path_str(
+            .get(Nibbles::from_raw_path_str(
                 "0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b",
             ))
             .is_err());
     }
 
     #[test]
-    pub fn test_trie_get_value_4_empty_value() {
-        let mut trie = Trie::<u64>::new();
+    pub fn test_trie_get_4_empty_value() {
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -781,7 +804,7 @@ mod tests {
          ).unwrap();
 
         assert_eq!(
-            trie.get_value(Nibbles::from_raw_path_str(
+            trie.get(Nibbles::from_raw_path_str(
                 "0x17fa14b0d73aa6a26d6b8720c1c84b50984f5c188ee1c113d2361e430f1b6764", // hash(pad(1234))
             ))
             .unwrap(),
@@ -790,8 +813,8 @@ mod tests {
     }
 
     #[test]
-    pub fn test_trie_set_value_1() {
-        let mut trie = Trie::<u64>::new();
+    pub fn test_trie_set_1() {
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -821,7 +844,7 @@ mod tests {
             "e730900f060334776424339bad2d8fb6f53d8b2ddbf991f492d852fb119addc0"
         );
 
-        trie.set_value(
+        trie.set(
             Nibbles::from_raw_path_str(
                 "0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b",
             ),
@@ -838,9 +861,9 @@ mod tests {
 
     #[test]
     pub fn test_trie_insert_new_leaf_on_root() {
-        let mut trie = Trie::<u64>::empty();
+        let mut trie = Trie::<Nibbles, u64>::empty();
 
-        trie.set_value(
+        trie.set(
             Nibbles::from_raw_path(
                 "0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0" // hash(pad(5))
                     .parse()
@@ -858,7 +881,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_insert_new_leaf_on_branch() {
-        let mut trie = Trie::<u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::new();
 
         trie.load_proof(
             Nibbles::from_raw_path_str("0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0"), // hash(pad(5))
@@ -882,7 +905,7 @@ mod tests {
         );
 
         // now inserting 7->7
-        trie.set_value(
+        trie.set(
             Nibbles::from_raw_path_str(
                 "0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688", // hash(pad(7))
             ),
@@ -901,8 +924,8 @@ mod tests {
     #[test]
     pub fn test_trie_insert_new_leaf_on_leaf_1() {
         // create a trie with 3->3 and then insert 5->5.
-        let mut trie = Trie::<u64>::empty();
-        trie.set_value(
+        let mut trie = Trie::<Nibbles, u64>::empty();
+        trie.set(
             Nibbles::from_raw_path_str(
                 "0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b", // hash(pad(3))
             ),
@@ -921,7 +944,7 @@ mod tests {
             "0c4caa428075ee816af422cf4cbec78e239dc705eb534e11909f6568409bfb47"
         );
 
-        trie.set_value(
+        trie.set(
             Nibbles::from_raw_path_str(
                 "0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0", // hash(pad(5))
             ),
@@ -945,8 +968,8 @@ mod tests {
     #[test]
     pub fn test_trie_insert_new_leaf_on_leaf_2() {
         // create a trie with 3->3 and then insert 5->5.
-        let mut trie = Trie::<u64>::new();
-        // trie.set_value(
+        let mut trie = Trie::<Nibbles, u64>::new();
+        // trie.set(
         //     Nibbles::from_raw_path_str(
         //         "0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b", // hash(pad(3))
         //     ),
@@ -973,7 +996,7 @@ mod tests {
         )
         .unwrap();
 
-        // trie.set_value(
+        // trie.set(
         //     Nibbles::from_raw_path_str(
         //         "0x00089936d6f8866fdbcb373720029ed6c076263e72bb11506447776f2764afdb", // hash(pad(891))
         //     ),

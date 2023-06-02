@@ -47,16 +47,16 @@ impl StateTrie {
         slot: U256,
         value: U256,
     ) -> Result<(), Error> {
-        let mut account_data = self.account_trie.get_account_data(address)?;
+        let mut account_data = self.account_trie.get(address)?;
         let mut storage_trie = self
             .storage_tries
             .remove(&account_data.storage_root)
             .expect("storage trie not present, this should not happen");
-        storage_trie.set_value(slot, value)?;
+        storage_trie.set(slot, value)?;
         account_data.storage_root = storage_trie.root().unwrap();
         self.storage_tries
             .insert(storage_trie.root().unwrap(), storage_trie);
-        self.account_trie.set_account_data(address, account_data)?;
+        self.account_trie.set(address, account_data)?;
         Ok(())
     }
 

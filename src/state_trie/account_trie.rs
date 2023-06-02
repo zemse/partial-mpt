@@ -1,72 +1,44 @@
-use crate::{nibbles::Nibbles, nodes::LeafValue, trie::Trie, Error};
+use crate::{
+    nibbles::Nibbles,
+    nodes::LeafValue,
+    trie::{MptKey, Trie},
+    Error,
+};
 use ethers::{
     types::{Address, Bytes, H256, U256},
-    utils::rlp::{Rlp, RlpStream},
+    utils::{
+        keccak256,
+        rlp::{Rlp, RlpStream},
+    },
 };
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct AccountTrie(Trie<AccountData>);
+pub type AccountTrie = Trie<Address, AccountData>;
+
+impl MptKey for Address {
+    fn to_nibbles(&self) -> Result<Nibbles, Error> {
+        Ok(Nibbles::from_raw_path(Bytes::from(
+            H256::from(keccak256(self)).as_bytes().to_vec(),
+        )))
+    }
+}
 
 impl AccountTrie {
-    pub fn new() -> Self {
-        AccountTrie(Trie::new())
-    }
-
-    pub fn from_root(root: H256) -> Self {
-        AccountTrie(Trie::from_root(root))
-    }
-
-    pub fn set_root(&mut self, root: H256) -> Result<(), Error> {
-        self.0.set_root(root)
-    }
-
-    pub fn root(&self) -> Option<H256> {
-        self.0.root
-    }
-
-    pub fn get_account_data(&self, address: Address) -> Result<AccountData, Error> {
-        let path = Nibbles::from_address(address)?;
-        self.0.get_value(path)
-    }
-
-    pub fn set_account_data(
-        &mut self,
-        address: Address,
-        new_value: AccountData,
-    ) -> Result<(), Error> {
-        let path = Nibbles::from_address(address)?;
-        self.0.set_value(path, new_value)
-    }
-
     pub fn set_nonce(&mut self, address: Address, new_nonce: U256) -> Result<(), Error> {
-        let mut data = self.get_account_data(address)?;
+        let mut data = self.get(address)?;
         data.nonce = new_nonce;
-        let path = Nibbles::from_address(address)?;
-        self.0.set_value(path, data)
+        self.set(address, data)
     }
 
     pub fn set_balance(&mut self, address: Address, new_balance: U256) -> Result<(), Error> {
-        let mut data = self.get_account_data(address)?;
+        let mut data = self.get(address)?;
         data.balance = new_balance;
-        let path = Nibbles::from_address(address)?;
-        self.0.set_value(path, data)
+        self.set(address, data)
     }
 
     pub fn set_code_hash(&mut self, address: Address, new_code_hash: H256) -> Result<(), Error> {
-        let mut data = self.get_account_data(address)?;
+        let mut data = self.get(address)?;
         data.code_hash = new_code_hash;
-        let path = Nibbles::from_address(address)?;
-        self.0.set_value(path, data)
-    }
-
-    pub fn load_proof(
-        &mut self,
-        address: Address,
-        value: AccountData,
-        proof: Vec<Bytes>,
-    ) -> Result<(), Error> {
-        let path = Nibbles::from_address(address)?;
-        self.0.load_proof(path, value, proof)
+        self.set(address, data)
     }
 }
 
@@ -102,9 +74,37 @@ impl LeafValue for AccountData {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use crate::trie::MptKey;
+
     use super::{AccountData, AccountTrie, Address, LeafValue, U256};
     use ethers::core::utils::hex;
     use ethers::utils::parse_ether;
+
+    #[test]
+    pub fn test_from_address_1() {
+        let nibbles = Address::from_str("0x0000000000000000000000000000000000000000")
+            .unwrap()
+            .to_nibbles()
+            .unwrap();
+        assert_eq!(
+            hex::encode(nibbles.to_raw_path()),
+            "5380c7b7ae81a58eb98d9c78de4a1fd7fd9535fc953ed2be602daaa41767312a"
+        );
+    }
+
+    #[test]
+    pub fn test_from_address_2() {
+        let nibbles = Address::from_str("0xB85e2cCa665D14A2C221F6975042c8d94D3847F8")
+            .unwrap()
+            .to_nibbles()
+            .unwrap();
+        assert_eq!(
+            hex::encode(nibbles.to_raw_path()),
+            "42dbef1b0a69a4c3d7a0551f30a6e7afb9c3a123c7d8c646df72249db3ea19be"
+        );
+    }
 
     #[test]
     pub fn test_account_data_raw_rlp_1() {
