@@ -76,7 +76,7 @@ impl StateTrie {
         for proof in proof.storage_proof {
             storage_trie.load_proof(
                 U256::from_big_endian(proof.key.as_bytes()),
-                proof.value, // error is here, value does not need to be 32 byte
+                proof.value,
                 proof.proof,
             )?;
         }

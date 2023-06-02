@@ -40,18 +40,8 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn empty() -> Self {
         Self::from_root(H256::from_str(EMPTY_ROOT_STR).unwrap())
-    }
-
-    // TODO remove this method
-    pub fn set_root(&mut self, root: H256) -> Result<(), Error> {
-        if self.root.is_some() {
-            return Err(Error::InternalError("root already present"));
-        }
-        self.root = Some(root);
-        Ok(())
     }
 
     pub fn root(&self) -> Option<H256> {
@@ -192,7 +182,6 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         loop {
             if let Some(hash_old_parent) = hash.prev() {
                 let mut parent_node = self.nodes.remove(&hash_old_parent).ok_or_else(|| {
-                    // todo remove this
                     Error::InternalError("parent found but still got None somehow")
                 })?;
                 parent_node = match parent_node {
@@ -206,7 +195,6 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                             .position(|el| el.is_some() && el.unwrap() == hash.current());
                         if some_index.is_none() {
                             return Err(Error::InternalError(
-                                // todo remove this
                                 "hash not found in parent node, this should ideally not happen",
                             ));
                         }
@@ -229,8 +217,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         Ok(())
     }
 
-    // TODO remove the _ postfix
-    pub fn load_proof(&mut self, key_: K, value_: V, proof: Vec<Bytes>) -> Result<(), Error> {
+    pub fn load_proof(&mut self, key: K, value: V, proof: Vec<Bytes>) -> Result<(), Error> {
         if proof.len() == 0 {
             if self.root.is_some() {
                 if self.root.unwrap() != EMPTY_ROOT_STR.parse().unwrap() {
@@ -238,7 +225,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                     return Err(Error::InternalError(
                         "Root is not empty, hence some proof is needed",
                     ));
-                } else if value_ != V::default() {
+                } else if value != V::default() {
                     // enforce the values to be empty, since it is empty root
                     return Err(Error::InternalError(
                         "Value should be empty, since root is empty",
@@ -255,7 +242,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         }
 
         let mut root = self.root.unwrap();
-        let mut key_current = key_.clone().to_nibbles()?;
+        let mut key_current = key.clone().to_nibbles()?;
 
         for (i, proof_entry) in proof.iter().enumerate() {
             let hash_node_data = H256::from(keccak256(proof_entry.clone()));
@@ -271,11 +258,15 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
             let node_data = NodeData::from_raw_rlp(proof_entry.to_owned())?;
 
             // if this is a leaf node (the last one), enforce key and value to be proper
-            if let NodeData::Leaf { key, value } = node_data.clone() {
-                if key != key_current {
+            if let NodeData::Leaf {
+                key: leaf_key,
+                value: leaf_value,
+            } = node_data.clone()
+            {
+                if leaf_key != key_current {
                     return Err(Error::InternalError("key in leaf does not match input"));
                 }
-                if value != value_ {
+                if leaf_value != value {
                     return Err(Error::InternalError("value in leaf does not match input"));
                 }
             }
