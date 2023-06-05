@@ -5,11 +5,12 @@ use crate::{
     Error,
 };
 
+use bytes::BytesMut;
 use ethers::{
     types::{BigEndianHash, Bytes, H256, U256},
     utils::{
         keccak256,
-        rlp::{Rlp, RlpStream},
+        rlp::{self, Rlp},
     },
 };
 
@@ -48,17 +49,22 @@ impl LeafValue for U256 {
             }
         }
 
-        let mut rlp_stream = RlpStream::default();
-        rlp_stream.append_raw(vec.as_slice(), 1);
-        Ok(Bytes::from(rlp_stream.out().to_vec()))
+        Ok(Bytes::from(
+            rlp::encode(&BytesMut::from(vec.as_slice())).to_vec(),
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ethers::{types::U256, utils::hex};
+    use std::str::FromStr;
 
-    use crate::trie::MptKey;
+    use ethers::{
+        types::{Bytes, U256},
+        utils::hex,
+    };
+
+    use crate::{nodes::LeafValue, trie::MptKey};
 
     #[test]
     pub fn test_from_uint_1() {
@@ -76,5 +82,19 @@ mod tests {
             hex::encode(nibbles.to_raw_path()),
             "405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace"
         );
+    }
+
+    #[test]
+    pub fn test_u256_from_raw_rlp() {
+        let value = U256::from_raw_rlp(Bytes::from_str("0x8456bfa79d").unwrap()).unwrap();
+        let expected = U256::from(0x56bfa79d);
+        assert_eq!(value, expected);
+    }
+
+    #[test]
+    pub fn test_u256_to_raw_rlp() {
+        let value = U256::from(0x56bfa79d).to_raw_rlp().unwrap();
+        let expected = Bytes::from_str("0x8456bfa79d").unwrap();
+        assert_eq!(value, expected);
     }
 }
