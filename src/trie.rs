@@ -54,13 +54,11 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         }
 
         let path = key.to_nibbles()?;
-
         let mut hash_current = self.root.unwrap();
         let mut i = 0;
-        let u4_vec = path.to_u4_vec();
         loop {
-            // if we got to an empty hash, means everything under this is empty
             if hash_current == EMPTY_ROOT_STR.parse().unwrap() {
+                // we got to an empty hash, means everything under this is empty.
                 return Ok(V::default());
             }
 
@@ -71,7 +69,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
 
             match node_data {
                 NodeData::Leaf { key, value } => {
-                    if key.to_u4_vec() == path.slice(i)?.to_u4_vec() {
+                    if key.clone() == path.slice(i)? {
                         // path exactly matches the leaf, it means we have found the value.
                         return Ok(value.to_owned());
                     } else {
@@ -80,18 +78,23 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                     }
                 }
                 NodeData::Branch(arr) => {
-                    let nibble = u4_vec[i] as usize;
+                    let nibble = path.nibble_at(i)?;
+                    // consume 1 nibble from path.
+                    i += 1;
+
                     if arr[nibble].is_some() {
-                        hash_current = arr[nibble as usize].unwrap();
+                        // get hash of next node from the branch to walk further.
+                        hash_current = arr[nibble].unwrap();
                     } else {
-                        // key value is not in the root, it is resolving to empty
+                        // key value is not in the root, it is resolving to empty.
                         return Ok(V::default());
                     }
-                    i += 1;
                 }
                 NodeData::Extension { key, node } => {
-                    hash_current = node.to_owned();
+                    // consume extension key nibbles from path.
                     i += key.len();
+                    // get hash of next branch node from the extension to walk further.
+                    hash_current = node.to_owned();
                 }
             }
         }
@@ -103,47 +106,44 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         }
 
         if self.get(key.clone()).unwrap() == (new_value) {
-            // value unchanged, do nothing.
+            // value is unchanged, do nothing.
             return Ok(());
         }
 
         let path = key.to_nibbles()?;
-
-        let path_u4_vec = path.to_u4_vec();
         let mut hash_items = ConsecutiveList::new(self.root.unwrap());
 
-        // if trie is empty, insert first node at root
         if hash_items.current() == EMPTY_ROOT_STR.parse().unwrap() {
-            let leaf = NodeData::Leaf {
-                key: path,
-                value: new_value,
-            };
-            let (hash_leaf, _) = self.nodes.insert(leaf)?;
-            self.root = Some(hash_leaf);
+            // root is empty, simply assign a leaf to the root.
+            self.root = Some(self.nodes.create_leaf(path, new_value)?);
             return Ok(());
         }
 
-        // keep traversing down the trie until we get the final node and update it
+        // keep traversing down the trie until we get the final node and update it.
         let mut i = 0;
         let mut hash_updated: H256;
         loop {
-            let mut current_node = self
+            // temporarily remove node from the map, so we can insert updated node into the map.
+            let current_node = self
                 .nodes
                 .remove(&hash_items.current())
                 .ok_or_else(|| Error::InternalError("node not present, please add a proof"))?;
 
-            current_node = match current_node {
+            // update current node if necessary.
+            let current_node_updated = match current_node {
                 NodeData::Leaf { key, value } => {
                     let path_slice = path.slice(i)?;
+                    // consume leaf key nibbles from path.
                     i += key.len();
-                    if key.to_u4_vec() == path_slice.to_u4_vec() {
-                        // path exactly matches, simply update value
+
+                    if key == path_slice {
+                        // path exactly matches, simply update value.
                         NodeData::Leaf {
                             key,
                             value: new_value.clone(),
                         }
                     } else {
-                        // we have to hook both leaves under a branch
+                        // otherwise to insert a leaf here, we have to hook both leaves under a branch.
                         let branch_or_extension = self.nodes.create_branch_or_extension(
                             key,
                             value,
@@ -152,47 +152,54 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                         )?;
                         branch_or_extension
                     }
-                    // todo: if value is set to zero, then this node has to be deleted
                 }
                 NodeData::Branch(mut arr) => {
-                    let nibble = path_u4_vec[i] as usize;
+                    let nibble = path.nibble_at(i)?;
+                    // consume 1 nibble from path.
                     i += 1;
+
                     if arr[nibble].is_some() {
-                        // set next for traversing down the branch
+                        // set next hash for traversing down the branch.
                         hash_items.set_next(arr[nibble as usize].unwrap())
                     } else {
-                        // create a leaf and assign to the branch
+                        // create a leaf and assign to the branch.
                         let path_slice = path.slice(i)?;
-                        i += path_slice.len();
-                        let leaf_hash = self.nodes.create_leaf(path_slice, new_value.clone())?;
+                        let leaf_hash = self
+                            .nodes
+                            .create_leaf(path_slice.clone(), new_value.clone())?;
                         arr[nibble] = Some(leaf_hash);
+                        // consume newly created leaf key nibbles from path.
+                        i += path_slice.len();
                     }
                     NodeData::Branch(arr)
                 }
                 NodeData::Extension { key, node } => {
+                    // set next hash for traversing down the extension.
                     hash_items.set_next(node.to_owned());
+                    // consume extension key nibbles from path.
                     i += key.len();
                     NodeData::Extension { key, node }
                 }
             };
 
-            (hash_updated, _) = self.nodes.insert(current_node)?;
+            // insert updated node into the map.
+            (hash_updated, _) = self.nodes.insert(current_node_updated)?;
 
-            // if we got nothing to further traverse down, exit the loop
             if !hash_items.go_next() {
+                // we got nothing to traverse further, exit the loop.
                 assert_eq!(i, path.len(), "path will be traversed completely");
                 break;
             }
         }
 
         if new_value == V::default() {
-            // remove leaf
+            // since we are removing the node, re-arrange the trie.
             if let Some(branch_hash) = hash_items.prev() {
+                // we have a branch above us, so let us update that branch.
                 let mut branch_node = self.nodes.remove(&branch_hash).ok_or_else(|| {
                     Error::InternalError("branch found but still got None somehow")
                 })?;
                 assert!(branch_node.is_branch());
-                // parent_node must be a branch or root
                 let mut arr = branch_node.get_branch_arr().unwrap();
                 let num_of_nodes_on_branch =
                     arr.iter().fold(
@@ -206,7 +213,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                         },
                     );
                 if num_of_nodes_on_branch > 2 {
-                    // we can just remove the leaf and stop here
+                    // we can simply remove the leaf and stop here.
                     let removal_index = arr
                         .iter()
                         .position(|el| el.is_some() && el.unwrap() == hash_items.current())
@@ -214,13 +221,13 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                             "hash not found in parent node, this should ideally not happen",
                         ))?;
 
+                    // update the branch node and save it.
                     arr[removal_index] = None;
-                    // update the branch node and save it
                     branch_node = NodeData::Branch(arr);
                     (hash_updated, _) = self.nodes.insert(branch_node)?;
                     hash_items.go_back();
                 } else if num_of_nodes_on_branch == 2 {
-                    // find the other node which we want to keep
+                    // we cannot simply remove leaf since that will cause branch contain just single node.
                     let keep_index = arr
                         .iter()
                         .position(|el| el.is_some() && el.unwrap() != hash_items.current())
@@ -228,114 +235,83 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                             "failed to find another element, this should ideally not happen",
                         ))?;
 
-                    // we want to remove the branch_node and put the keep_node in that place
+                    // we want to remove the branch and put the keep_node in it's place.
                     let keep_hash = arr[keep_index].unwrap();
                     let keep_node = self.nodes.remove(&keep_hash).ok_or_else(|| {
                         Error::InternalError("keep node not present, please load_proof for key, TODO display key here")
                     })?;
 
-                    // making necessary changes to the keep_node
-                    let keep_node_new = match keep_node {
+                    // making necessary changes to the keep_node.
+                    let keep_node_updated = match keep_node {
                         NodeData::Leaf { key, value } => {
-                            // insert nibble at begining of key
+                            // insert nibble at begining of key.
                             NodeData::Leaf {
                                 key: key.prepend_nibbles(vec![keep_index as u8])?,
                                 value,
                             }
                         }
                         NodeData::Branch(arr) => {
-                            // insert the branch back as it is
+                            // insert the branch back as it is.
                             self.nodes.insert(NodeData::Branch(arr))?;
-                            // create an extension node which points to the branch
+                            // create an extension node which points to the branch.
                             NodeData::<V>::Extension {
                                 key: Nibbles::from_u4_vec(vec![keep_index as u8])?,
                                 node: keep_hash,
                             }
                         }
                         NodeData::Extension { key, node } => {
-                            // edit the key of this extension node and add nibble at begining of key
+                            // edit the key of this extension node and add nibble at begining of key.
                             NodeData::Extension {
                                 key: key.prepend_nibbles(vec![keep_index as u8])?,
                                 node,
                             }
                         }
                     };
-
-                    let (keep_hash_new, _) = self.nodes.insert(keep_node_new)?;
+                    // store in hash_updated so that the next loop will update all parent upto the root.
+                    (hash_updated, _) = self.nodes.insert(keep_node_updated)?;
                     hash_items.go_back();
-
-                    if let Some(branch_parent_hash) = hash_items.prev() {
-                        let branch_parent_node =
-                            self.nodes.remove(&branch_parent_hash).ok_or_else(|| {
-                                Error::InternalError("parent found but still got None somehowx")
-                            })?;
-                        let branch_parent_node_updated = match branch_parent_node {
-                            NodeData::Branch(mut arr) => {
-                                // find the old branch hash and replace it with keep hash new
-                                let index = arr
-                                    .iter()
-                                    .position(|el| el.is_some() && el.unwrap() == hash_items.current())
-                                    .ok_or(Error::InternalError(
-                                        "hash not found in parent node, this should ideally not happen",
-                                    ))?;
-
-                                arr[index] = Some(keep_hash_new);
-                                NodeData::<V>::Branch(arr)
-                            }
-                            NodeData::Extension { key, node: _ } => {
-                                // node must be branch hash, replace it with keep hash new
-                                NodeData::<V>::Extension {
-                                    key,
-                                    node: keep_hash_new,
-                                }
-                            }
-                            _ => unreachable!("this is unreachable"),
-                        };
-                        (hash_updated, _) = self.nodes.insert(branch_parent_node_updated)?;
-                        hash_items.go_back();
-                    } else {
-                        hash_updated = keep_hash_new;
-                    }
                 } else {
                     panic!("there were less than two nodes on a branch, this can't happen");
                 }
             } else {
-                // leaf is directly on the root
+                // leaf is directly on the root, removing it makes the trie empty.
                 hash_updated = EMPTY_ROOT_STR.parse().unwrap();
             }
         }
 
-        // keep traversing up the trie while updating the hashes until we get to the root
+        // keep traversing up the trie while updating the hashes until we get to the root.
         loop {
             if let Some(hash_old_parent) = hash_items.prev() {
-                let mut parent_node = self.nodes.remove(&hash_old_parent).ok_or_else(|| {
+                // we have a parent, so let us update that parent.
+                let parent_node = self.nodes.remove(&hash_old_parent).ok_or_else(|| {
                     Error::InternalError("parent found but still got None somehow")
                 })?;
-                parent_node = match parent_node {
+                let parent_node_updated = match parent_node {
                     NodeData::Leaf { key: _, value: _ } => {
+                        // leaf cannot appear as a parent.
                         unreachable!()
                     }
                     NodeData::Branch(mut arr) => {
-                        // update the hash at correct location in parent branch
-                        let some_index = arr
+                        // update the hash at correct location in parent branch.
+                        let index = arr
                             .iter()
-                            .position(|el| el.is_some() && el.unwrap() == hash_items.current());
-                        if some_index.is_none() {
-                            return Err(Error::InternalError(
+                            .position(|el| el.is_some() && el.unwrap() == hash_items.current())
+                            .ok_or(Error::InternalError(
                                 "hash not found in parent node, this should ideally not happen",
-                            ));
-                        }
-                        arr[some_index.unwrap()] = Some(hash_updated);
-                        NodeData::Branch(arr)
+                            ))?;
+                        arr[index] = Some(hash_updated);
+                        NodeData::<V>::Branch(arr)
                     }
                     NodeData::Extension { key, node: _ } => NodeData::Extension {
                         key,
                         node: hash_updated,
                     },
                 };
-                (hash_updated, _) = self.nodes.insert(parent_node)?;
+                // store in hash_updated so that the next iteration will use this in parent.
+                (hash_updated, _) = self.nodes.insert(parent_node_updated)?;
                 hash_items.go_back();
             } else {
+                // finally we reached the root! what a hell of a journey this was 😌.
                 self.root = Some(hash_updated);
                 break;
             }
@@ -352,12 +328,12 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         if proof.len() == 0 {
             if self.root.is_some() {
                 if self.root.unwrap() != EMPTY_ROOT_STR.parse().unwrap() {
-                    // enforce proof to be empt
+                    // enforce proof to be empty.
                     return Err(Error::InternalError(
                         "Root is not empty, hence some proof is needed",
                     ));
                 } else if value != V::default() {
-                    // enforce the values to be empty, since it is empty root
+                    // enforce the values to be empty, since it is empty root.
                     return Err(Error::InternalError(
                         "Value should be empty, since root is empty",
                     ));
@@ -368,6 +344,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
 
         // proof.len() > 0
         if self.root.is_none() {
+            // use first element in proof to calculate root.
             let proof_root = proof[0].clone();
             self.root = Some(H256::from(keccak256(proof_root)));
         }
@@ -378,17 +355,17 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         for (i, proof_entry) in proof.iter().enumerate() {
             let hash_node_data = H256::from(keccak256(proof_entry.clone()));
 
-            // check if node data is preimage of root
+            // check if node data is preimage of root.
             if hash_node_data != root {
                 return Err(Error::InternalError(
                     "proof entry hash does not match the node root",
                 ));
             }
 
-            // decode the node
+            // decode the node.
             let node_data = NodeData::from_raw_rlp(proof_entry.to_owned())?;
 
-            // if this is a leaf node (the last one), enforce key and value to be proper
+            // if this is a leaf node (the last one), enforce key and value to be proper.
             if let NodeData::Leaf {
                 key: leaf_key,
                 value: leaf_value,
@@ -410,18 +387,18 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
             match node_data {
                 NodeData::Extension { key, node } => {
                     root = node;
-                    // skip nibbles already included in extension key in the current key
+                    // skip nibbles already included in extension key in the current key.
                     key_current = key_current.slice(key.len())?;
                 }
                 NodeData::Branch(arr) => {
-                    for _child in arr {
-                        // find the appropriate child node in branch
+                    for some_child in arr {
+                        // find the appropriate child node in branch.
                         let hash_next = H256::from(keccak256(proof[i + 1].clone()));
-                        if _child.is_some() {
-                            let child = _child.unwrap();
+                        if some_child.is_some() {
+                            let child = some_child.unwrap();
                             if child == hash_next {
                                 root = child;
-                                // skip one nibble in the current key for branch nodes
+                                // skip one nibble in the current key for branch nodes.
                                 key_current = key_current.slice(1)?;
                                 break;
                             }

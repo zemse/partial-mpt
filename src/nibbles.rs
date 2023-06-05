@@ -88,6 +88,13 @@ impl Nibbles {
         self.0.clone()
     }
 
+    pub fn nibble_at(&self, index: usize) -> Result<usize, Error> {
+        if index >= self.0.len() {
+            return Err(Error::InternalError("index out of bounds"));
+        }
+        Ok(self.0[index] as usize)
+    }
+
     pub fn encode_path(&self, terminator: bool) -> Bytes {
         let mut bytes_vec = self.to_raw_path().to_vec();
         if self.0.len() % 2 != 0 {
@@ -189,6 +196,13 @@ mod tests {
             hex::encode(nibbles.to_raw_path()),
             hex::encode(vec![0x12, 0x34, 0x56])
         );
+        assert_eq!(nibbles.nibble_at(0).unwrap(), 1);
+        assert_eq!(nibbles.nibble_at(1).unwrap(), 2);
+        assert_eq!(nibbles.nibble_at(2).unwrap(), 3);
+        assert_eq!(nibbles.nibble_at(3).unwrap(), 4);
+        assert_eq!(nibbles.nibble_at(4).unwrap(), 5);
+        assert_eq!(nibbles.nibble_at(5).unwrap(), 6);
+        assert!(nibbles.nibble_at(6).is_err());
     }
 
     #[test]
