@@ -10,7 +10,7 @@ use ethers::{
 };
 use std::{fmt::Debug, marker::PhantomData, str::FromStr};
 
-const EMPTY_ROOT_STR: &str = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421";
+const EMPTY_ROOT_STR: &str = "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421";
 
 pub trait MptKey: Clone + Debug + PartialEq {
     fn to_nibbles(&self) -> Result<Nibbles, Error>;
@@ -431,12 +431,23 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MptKey, Nibbles, NodeData, Trie};
-    use ethers::utils::hex;
+    use super::{MptKey, Nibbles, NodeData, Trie, EMPTY_ROOT_STR};
+    use ethers::{
+        types::{BigEndianHash, Bytes, H256, U256},
+        utils::{hex, keccak256},
+    };
 
     impl MptKey for Nibbles {
         fn to_nibbles(&self) -> Result<Nibbles, crate::Error> {
             Ok(self.to_owned())
+        }
+    }
+
+    impl MptKey for u64 {
+        fn to_nibbles(&self) -> Result<Nibbles, crate::Error> {
+            Ok(Nibbles::from_raw_path(Bytes::from(
+                keccak256(H256::from_uint(&U256::from(*self))).to_vec(),
+            )))
         }
     }
 
@@ -1039,14 +1050,8 @@ mod tests {
     #[test]
     pub fn test_trie_insert_new_leaf_on_leaf_1() {
         // create a trie with 3->3 and then insert 5->5.
-        let mut trie = Trie::<Nibbles, u64>::empty();
-        trie.set(
-            Nibbles::from_raw_path_str(
-                "0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b", // hash(pad(3))
-            ),
-            3,
-        )
-        .unwrap();
+        let mut trie = Trie::<u64, u64>::empty();
+        trie.set(3, 3).unwrap();
 
         println!("trie before {:#?}", trie);
 
@@ -1059,13 +1064,7 @@ mod tests {
             "0c4caa428075ee816af422cf4cbec78e239dc705eb534e11909f6568409bfb47"
         );
 
-        trie.set(
-            Nibbles::from_raw_path_str(
-                "0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0", // hash(pad(5))
-            ),
-            5,
-        )
-        .unwrap();
+        trie.set(5, 5).unwrap();
 
         println!("trie after {:#?}", trie);
 
@@ -1083,10 +1082,10 @@ mod tests {
     #[test]
     pub fn test_trie_insert_new_leaf_on_leaf_2() {
         // create a trie with 3->3 and then insert 5->5.
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<u64, u64>::new();
 
         trie.load_proof(
-            Nibbles::from_raw_path_str("0x00089936d6f8866fdbcb373720029ed6c076263e72bb11506447776f2764afdb"), // hash(pad(891))
+            891,
             891,
             vec![
                 "0xf851a0745e7881bf31b835a0d5d787dc660bc6cee99caf233635453d93c792ac2f24768080808080808080808080a0b92bbcfcacad3b833b4d2a4993069af365b8ae1fb94abe5cd3f89d97ee91146280808080"
@@ -1115,64 +1114,92 @@ mod tests {
     #[test]
     pub fn test_trie_remove_1_leaf_on_root() {
         // single key in the trie, after removal none remains
-        let key_a = Nibbles::from_raw_path_str(
-            "0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace", // hash(pad(2))
+        let mut trie = Trie::<u64, u64>::empty();
+
+        trie.set(2, 1).unwrap();
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "43b3f515867571cb1b6893b406551741c129ba2e6e80dbcfa92f82e879fd9d28"
         );
 
-        let mut trie = Trie::<Nibbles, u64>::empty();
-
-        let root_before = trie.root.unwrap();
-        trie.set(key_a.clone(), 2).unwrap();
-        trie.remove(key_a).unwrap();
-        let root_after = trie.root.unwrap();
-
-        assert_eq!(root_before, root_after);
+        trie.remove(2).unwrap();
+        assert_eq!(hex::encode(trie.root.unwrap()), EMPTY_ROOT_STR);
     }
 
     #[test]
-    pub fn test_trie_remove_2_branch_removal() {
-        // two key in the trie, after removal one remains
-        let key_a = Nibbles::from_raw_path_str(
-            "0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace", // hash(pad(2))
+    pub fn test_trie_remove_2_simple_branch_update() {
+        let mut trie = Trie::<u64, u64>::empty();
+
+        trie.set(2, 1).unwrap(); // 0x405..
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "43b3f515867571cb1b6893b406551741c129ba2e6e80dbcfa92f82e879fd9d28"
         );
-        let key_c = Nibbles::from_raw_path_str(
-            "0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688", // hash(pad(7))
+
+        trie.set(5, 1).unwrap(); // 0x036..
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "2da5223fccd774d9ebc91430acd028ec4a017afbe9eb0de0a39a24004115a70f"
         );
 
-        let mut trie = Trie::<Nibbles, u64>::empty();
-        trie.set(key_a.clone(), 2).unwrap();
+        trie.set(7, 1).unwrap(); // 0xa66..
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "bf30980e36d0c101f2921e9c9d7b5193d280733218953c09592857f5d76013fb"
+        );
 
-        let root_before = trie.root.unwrap();
-        trie.set(key_c.clone(), 7).unwrap();
-        trie.remove(key_c).unwrap();
-        let root_after = trie.root.unwrap();
-
-        assert_eq!(root_before, root_after);
-        // assert!(false);
+        trie.remove(7).unwrap(); // remove 0xa66..
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "2da5223fccd774d9ebc91430acd028ec4a017afbe9eb0de0a39a24004115a70f"
+        );
     }
 
     #[test]
-    pub fn test_trie_remove_3_branch_update() {
-        // three key in the trie, after removal two remain
-        let key_a = Nibbles::from_raw_path_str(
-            "0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace", // hash(pad(2))
-        );
-        let key_b = Nibbles::from_raw_path_str(
-            "0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0", // hash(pad(5))
-        );
-        let key_c = Nibbles::from_raw_path_str(
-            "0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688", // hash(pad(7))
+    pub fn test_trie_remove_3_branch_removal() {
+        let mut trie = Trie::<u64, u64>::empty();
+
+        trie.set(2, 1).unwrap(); // 0x405..
+        trie.set(5, 1).unwrap(); // 0xa66..
+
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "2da5223fccd774d9ebc91430acd028ec4a017afbe9eb0de0a39a24004115a70f"
         );
 
-        let mut trie = Trie::<Nibbles, u64>::empty();
-        trie.set(key_a.clone(), 2).unwrap();
-        trie.set(key_b.clone(), 5).unwrap();
+        trie.remove(5).unwrap();
 
-        let root_before = trie.root.unwrap();
-        trie.set(key_c.clone(), 7).unwrap();
-        trie.remove(key_c).unwrap();
-        let root_after = trie.root.unwrap();
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "43b3f515867571cb1b6893b406551741c129ba2e6e80dbcfa92f82e879fd9d28"
+        );
+    }
 
-        assert_eq!(root_before, root_after);
+    #[test]
+    pub fn test_trie_remove_4_branch_removal_deep() {
+        let mut trie = Trie::<u64, u64>::empty();
+
+        // branch on root
+        trie.set(1, 1).unwrap(); // b**
+
+        // branch on 0
+        trie.set(159, 1).unwrap(); // 0b** // this to be removed
+
+        // branch at 00
+        trie.set(480, 1).unwrap(); // 00**
+        trie.set(581, 1).unwrap(); // 00**
+        trie.set(732, 1).unwrap(); // 00**
+
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "3d3df778b70d54c8a8267b8bd725d74539e7152102697d3c54d0122ee4826945"
+        );
+
+        trie.remove(159).unwrap();
+
+        assert_eq!(
+            hex::encode(trie.root.unwrap()),
+            "c919bde029dfebf4c4f50b9ceca10dbf0ce3b9477755301921d94c8e593fb1aa"
+        );
     }
 }
