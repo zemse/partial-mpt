@@ -141,6 +141,13 @@ where
         }
     }
 
+    pub fn get_branch_arr(&self) -> Option<[Option<H256>; 17]> {
+        match self {
+            NodeData::Branch(arr) => Some(arr.to_owned()),
+            _ => None,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn set_value_on_leaf(&mut self, new_value: V) -> Result<(), Error> {
         match self {

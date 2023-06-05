@@ -135,6 +135,18 @@ impl Nibbles {
         Self::from_u4_vec(intersect_vec)
     }
 
+    pub fn prepend_nibbles(&self, u4_vec: Vec<u8>) -> Result<Self, Error> {
+        let self_vec = self.to_u4_vec();
+        let mut concat_vec = Vec::new();
+        for i in 0..u4_vec.len() {
+            concat_vec.push(u4_vec[i]);
+        }
+        for i in 0..self_vec.len() {
+            concat_vec.push(self_vec[i]);
+        }
+        Self::from_u4_vec(concat_vec)
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -354,5 +366,13 @@ mod tests {
         let nibbles1 = Nibbles::from_raw_path("123456".parse().unwrap());
         let nibbles2 = Nibbles::from_raw_path("12345678".parse().unwrap());
         assert!(nibbles1.intersect(&nibbles2).is_err());
+    }
+
+    #[test]
+    pub fn test_prepend_nibbles_1() {
+        let nibbles = Nibbles::from_raw_path("123456".parse().unwrap());
+        let nibbles_prepend = nibbles.prepend_nibbles(vec![9]).unwrap();
+        assert_eq!(nibbles_prepend.len(), 7);
+        assert_eq!(nibbles_prepend.to_u4_vec(), vec![9, 1, 2, 3, 4, 5, 6,]);
     }
 }
