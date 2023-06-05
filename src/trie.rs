@@ -72,9 +72,11 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
             match node_data {
                 NodeData::Leaf { key, value } => {
                     if key.to_u4_vec() == path.slice(i)?.to_u4_vec() {
+                        // path exactly matches the leaf, it means we have found the value.
                         return Ok(value.to_owned());
                     } else {
-                        return Err(Error::InternalError("path mismatch"));
+                        // path doesn't match with the leaf, it means value is not set for the key.
+                        return Ok(V::default());
                     }
                 }
                 NodeData::Branch(arr) => {
@@ -98,6 +100,11 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
     pub fn set(&mut self, key: K, new_value: V) -> Result<(), Error> {
         if self.root.is_none() {
             return Err(Error::InternalError("root not set"));
+        }
+
+        if self.get(key.clone()).unwrap() == (new_value) {
+            // value unchanged, do nothing.
+            return Ok(());
         }
 
         let path = key.to_nibbles()?;
@@ -1201,5 +1208,16 @@ mod tests {
             hex::encode(trie.root.unwrap()),
             "c919bde029dfebf4c4f50b9ceca10dbf0ce3b9477755301921d94c8e593fb1aa"
         );
+    }
+
+    #[test]
+    pub fn test_trie_remove_5_non_existing_key() {
+        let mut trie = Trie::<u64, u64>::empty();
+
+        trie.set(1, 1).unwrap();
+
+        let root_before = trie.root.unwrap();
+        trie.remove(2).unwrap();
+        assert_eq!(trie.root.unwrap(), root_before);
     }
 }
