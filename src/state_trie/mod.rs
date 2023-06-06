@@ -41,6 +41,11 @@ impl StateTrie {
         }
     }
 
+    pub fn get_storage_at(&mut self, address: Address, key: U256) -> Result<U256, Error> {
+        let account_data = self.account_trie.get(address)?;
+        self.get_storage_trie(account_data.storage_root).get(key)
+    }
+
     pub fn set_storage_value(
         &mut self,
         address: Address,
@@ -88,12 +93,16 @@ impl StateTrie {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::{EIP1186ProofResponse, StateTrie, U256};
     use ethers::core::utils::hex;
-    use ethers::types::StorageProof;
+    use ethers::providers::{Middleware, Provider};
+    use ethers::types::{Address, BigEndianHash, BlockId, BlockNumber, StorageProof, H256};
+    use ethers::utils::keccak256;
 
     #[test]
-    pub fn test_state_1() {
+    pub fn test_geth_dev_state_1() {
         // a contract was deployed on geth --dev
         // slot[1] = 2
         // slot[2] = 4
@@ -161,8 +170,6 @@ mod tests {
             "60bfaa2e6e61adcd645ce3aefc05c3bda2ed31f95fdd8bd5422dc2b8c78ae909"
         );
 
-        println!("before {:?}", trie);
-
         trie.account_trie
             .set_nonce(
                 "0x3736b9d9d35d8c4f41d98a412fe9211024453575"
@@ -190,11 +197,156 @@ mod tests {
         )
         .unwrap();
 
-        println!("after {:?}", trie);
-
         assert_eq!(
             hex::encode(trie.root().unwrap()),
             "bf04d56bcfb758b80412e16f9d84ce369ba87534b4226f0d2d41482a2127e811"
         );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "test-live"), ignore)]
+    pub async fn test_mainnet_block_1000024() {
+        // https://etherscan.io/block/1000024
+        test_mainnet_block(
+            1000024,
+            vec![
+                (
+                    // miner
+                    "0xD34DA389374CAAD1A048FBDC4569AAE33fD5a375"
+                        .parse()
+                        .unwrap(),
+                    vec![],
+                ),
+                (
+                    // tx1 - sender
+                    "0x2a65aca4d5fc5b5c859090a6c34d164135398226"
+                        .parse()
+                        .unwrap(),
+                    vec![],
+                ),
+                (
+                    // tx1 - dest
+                    "0xf27b8f9e16d5b673c0a730f1994e1a588b221620"
+                        .parse()
+                        .unwrap(),
+                    vec![],
+                ),
+                (
+                    // tx2 - sender
+                    "0x45c1392523399c1ce21ead4ecb808606c189fac2"
+                        .parse()
+                        .unwrap(),
+                    vec![],
+                ),
+                (
+                    // tx2 - dest
+                    "0xc7696b27830dd8aa4823a1cba8440c27c36adec4"
+                        .parse()
+                        .unwrap(),
+                    vec![
+                        H256::from_uint(&U256::from(8)),
+                        H256::from_uint(&U256::from(9)),
+                        H256::from_uint(&U256::from(0xa)),
+                        H256::from_uint(&U256::from(0xb)),
+                    ],
+                ),
+                (
+                    // tx3 - sender
+                    "0x120a270bbc009644e35f0bb6ab13f95b8199c4ad"
+                        .parse()
+                        .unwrap(),
+                    vec![],
+                ),
+                (
+                    // tx3 - dest
+                    "0x640d323222b99f3477339ff1639dcd66a93819fe"
+                        .parse()
+                        .unwrap(),
+                    vec![],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    pub async fn test_mainnet_block(
+        block_number: u64,
+        accounts_touched: Vec<(Address, Vec<H256>)>,
+    ) {
+        let rpc_url = env::var("RPC").expect("pass RPC env var");
+        let provider = Provider::try_from(rpc_url).unwrap();
+
+        let prev_block_number = Some(BlockId::Number(BlockNumber::from(block_number - 1)));
+        let current_block_number = Some(BlockId::Number(BlockNumber::from(block_number)));
+
+        let prev_block = provider
+            .get_block(prev_block_number.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut state_trie = StateTrie::from_root(prev_block.state_root);
+
+        // download EIP-1186 state proofs.
+        for (address, slots) in accounts_touched.clone() {
+            let proof = provider
+                .get_proof(address, slots, prev_block_number)
+                .await
+                .unwrap();
+
+            state_trie.load_proof(proof).unwrap();
+        }
+
+        // update state on our trie.
+        for (address, slots) in accounts_touched {
+            let new_balance = provider
+                .get_balance(address, current_block_number)
+                .await
+                .unwrap();
+            let new_nonce = provider
+                .get_transaction_count(address, current_block_number)
+                .await
+                .unwrap();
+            let new_code_hash = H256::from(keccak256(
+                provider
+                    .get_code(address, current_block_number)
+                    .await
+                    .unwrap(),
+            ));
+
+            state_trie
+                .account_trie
+                .set_balance(address, new_balance)
+                .unwrap();
+            state_trie
+                .account_trie
+                .set_nonce(address, new_nonce)
+                .unwrap();
+            state_trie
+                .account_trie
+                .set_code_hash(address, new_code_hash)
+                .unwrap();
+
+            for slot in slots {
+                let value = provider
+                    .get_storage_at(address, slot, current_block_number)
+                    .await
+                    .unwrap();
+                let _slot = U256::from_big_endian(slot.as_bytes());
+                let _value = U256::from_big_endian(value.as_bytes());
+                state_trie
+                    .set_storage_value(address, _slot, _value)
+                    .unwrap();
+            }
+        }
+
+        let current_block = provider
+            .get_block(current_block_number.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let calculated_root = state_trie.root().unwrap();
+
+        assert_eq!(calculated_root, current_block.state_root);
     }
 }
