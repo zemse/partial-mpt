@@ -94,11 +94,12 @@ impl StateTrie {
 #[cfg(test)]
 mod tests {
     use std::env;
+    use std::str::FromStr;
 
     use super::{EIP1186ProofResponse, StateTrie, U256};
     use ethers::core::utils::hex;
     use ethers::providers::{Middleware, Provider};
-    use ethers::types::{Address, BigEndianHash, BlockId, BlockNumber, StorageProof, H256};
+    use ethers::types::{BigEndianHash, BlockId, BlockNumber, StorageProof, H256};
     use ethers::utils::keccak256;
 
     #[test]
@@ -210,39 +211,12 @@ mod tests {
         test_mainnet_block(
             1000024,
             vec![
+                ("0xD34DA389374CAAD1A048FBDC4569AAE33fD5a375", vec![]), // miner
+                ("0x2a65aca4d5fc5b5c859090a6c34d164135398226", vec![]), // tx1 - sender
+                ("0xf27b8f9e16d5b673c0a730f1994e1a588b221620", vec![]), // tx1 - dest
+                ("0x45c1392523399c1ce21ead4ecb808606c189fac2", vec![]), // tx2 - sender
                 (
-                    // miner
-                    "0xD34DA389374CAAD1A048FBDC4569AAE33fD5a375"
-                        .parse()
-                        .unwrap(),
-                    vec![],
-                ),
-                (
-                    // tx1 - sender
-                    "0x2a65aca4d5fc5b5c859090a6c34d164135398226"
-                        .parse()
-                        .unwrap(),
-                    vec![],
-                ),
-                (
-                    // tx1 - dest
-                    "0xf27b8f9e16d5b673c0a730f1994e1a588b221620"
-                        .parse()
-                        .unwrap(),
-                    vec![],
-                ),
-                (
-                    // tx2 - sender
-                    "0x45c1392523399c1ce21ead4ecb808606c189fac2"
-                        .parse()
-                        .unwrap(),
-                    vec![],
-                ),
-                (
-                    // tx2 - dest
-                    "0xc7696b27830dd8aa4823a1cba8440c27c36adec4"
-                        .parse()
-                        .unwrap(),
+                    "0xc7696b27830dd8aa4823a1cba8440c27c36adec4", // tx2 - dest
                     vec![
                         H256::from_uint(&U256::from(8)),
                         H256::from_uint(&U256::from(9)),
@@ -250,29 +224,56 @@ mod tests {
                         H256::from_uint(&U256::from(0xb)),
                     ],
                 ),
-                (
-                    // tx3 - sender
-                    "0x120a270bbc009644e35f0bb6ab13f95b8199c4ad"
-                        .parse()
-                        .unwrap(),
-                    vec![],
-                ),
-                (
-                    // tx3 - dest
-                    "0x640d323222b99f3477339ff1639dcd66a93819fe"
-                        .parse()
-                        .unwrap(),
-                    vec![],
-                ),
+                ("0x120a270bbc009644e35f0bb6ab13f95b8199c4ad", vec![]), // tx3 - sender
+                ("0x640d323222b99f3477339ff1639dcd66a93819fe", vec![]), // tx3 - dest
             ],
         )
         .await;
     }
 
-    pub async fn test_mainnet_block(
-        block_number: u64,
-        accounts_touched: Vec<(Address, Vec<H256>)>,
-    ) {
+    #[tokio::test]
+    #[cfg_attr(not(feature = "test-live"), ignore)]
+    pub async fn test_mainnet_block_2000002() {
+        // https://etherscan.io/block/2000002
+        test_mainnet_block(
+            2000002,
+            vec![
+                ("0xAdd823F3B2a13fA365f03d8D59ac3f017b15dB02", vec![]), // miner
+                ("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8", vec![]), // tx1 - sender
+                ("0xCFc4EC1faA4f91F6E917e9e556320c841DA8588d", vec![]), // tx1 - dest
+                ("0xBa562F24005910e25dfaf2A42FeA4C0BF8A2D1c5", vec![]), // tx2 - dest
+                ("0xA5cebfe4aCc8d63B3257AC7f33677B987693072a", vec![]), // tx3 - dest
+                ("0x8d0e7c2C82970C9d1B7d598Be20F2bA0f13E6537", vec![]), // tx4 - dest
+                ("0xE68D2582D54Cd865C8FecD9733525d60BE68af67", vec![]), // tx5 - sender
+                (
+                    "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413", // tx5 - dest
+                    vec![H256::from_str(
+                        "0x26e91fb58c30a80e3b2a8a4e671deffbfb6d0327c8e58a194296183d922ee994",
+                    )
+                    .unwrap()],
+                ),
+                ("0x5410C4c59A719EeF345869c204eC8Dcac2dfD718", vec![]), // tx6 - sender
+                ("0xa795B4DDBF17570f2c8f5e75a13EF94DB6757F32", vec![]), // tx6 - dest
+                ("0x4B8a25120682Dc5a5696D21C6D65f98442C7752F", vec![]), // tx7 - sender
+                (
+                    "0xb4bfEfC30A60B87380e377F8B96CC3b2E65A8F64", // tx7 - dest
+                    vec![H256::from_uint(&U256::from(7))],
+                ),
+                ("0xe77f55ea0c862c78dd02dcf8828e5046c98ef97c", vec![]), // tx7 - internal
+                ("0x5ec0f3f946525abc4cccb433e6fc54df6d55e192", vec![]), // tx7 - internal
+                ("0x6bd0F7D1c3b3eB168b9CA96BD7872A41e2D4EEc5", vec![]), // tx8 - sender
+                ("0xAA1A6e3e6EF20068f7F8d8C835d2D22fd5116444", vec![]), // tx8 - dest
+                ("0x4af482be804f3c925f0b405d871fa53acaa91fbb", vec![]), // tx8 - internal
+                ("0x32Be343B94f860124dC4fEe278FDCBD38C102D88", vec![]), // tx9 - sender
+                ("0x06c69F734A0240Cb31678412F04EB0CE8F39258b", vec![]), // tx9 - dest
+                ("0x147184Ef469cE9Bba3d08aF16F0b6d31CAC35ac8", vec![]), // tx10 - sender
+                ("0x695055f1EA55c36EC7E3Bd43D1736511ac8daB61", vec![]), // tx10 - dest
+            ],
+        )
+        .await;
+    }
+
+    pub async fn test_mainnet_block(block_number: u64, accounts_touched: Vec<(&str, Vec<H256>)>) {
         let rpc_url = env::var("RPC").expect("pass RPC env var");
         let provider = Provider::try_from(rpc_url).unwrap();
 
@@ -297,7 +298,9 @@ mod tests {
         }
 
         // update state on our trie.
-        for (address, slots) in accounts_touched {
+        for (address_str, slots) in accounts_touched {
+            let address = address_str.parse().unwrap();
+
             let new_balance = provider
                 .get_balance(address, current_block_number)
                 .await
