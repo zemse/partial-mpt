@@ -365,6 +365,11 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
             // decode the node.
             let node_data = NodeData::from_raw_rlp(proof_entry.to_owned())?;
 
+            let some_node_data_stored = self.nodes.get(&hash_node_data);
+            if some_node_data_stored.is_none() {
+                self.nodes.insert(node_data.clone())?;
+            }
+
             // if this is a leaf node (the last one), enforce key and value to be proper.
             if let NodeData::Leaf {
                 key: leaf_key,
@@ -372,16 +377,16 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
             } = node_data.clone()
             {
                 if leaf_key != key_current {
-                    return Err(Error::InternalError("key in leaf does not match input"));
+                    // we ran into some other leaf which means our key must have null value otherwise it's a problem.
+                    if value == V::default() {
+                        return Ok(());
+                    } else {
+                        return Err(Error::InternalError("key in leaf does not match input"));
+                    }
                 }
                 if leaf_value != value {
                     return Err(Error::InternalError("value in leaf does not match input"));
                 }
-            }
-
-            let some_node_data_stored = self.nodes.get(&hash_node_data);
-            if some_node_data_stored.is_none() {
-                self.nodes.insert(node_data.clone())?;
             }
 
             match node_data {
@@ -391,16 +396,27 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                     key_current = key_current.slice(key.len())?;
                 }
                 NodeData::Branch(arr) => {
-                    for some_child in arr {
-                        // find the appropriate child node in branch.
-                        let hash_next = H256::from(keccak256(proof[i + 1].clone()));
-                        if some_child.is_some() {
-                            let child = some_child.unwrap();
-                            if child == hash_next {
-                                root = child;
-                                // skip one nibble in the current key for branch nodes.
-                                key_current = key_current.slice(1)?;
-                                break;
+                    if proof.len() <= i + 1 {
+                        // child does not exist, so the value must be null
+                        if value == V::default() {
+                            return Ok(());
+                        } else {
+                            return Err(Error::InternalError(
+                                "child does not exist and value is not null",
+                            ));
+                        }
+                    } else {
+                        // find the child node in branch which matches hash_child.
+                        let hash_child = H256::from(keccak256(proof[i + 1].clone()));
+                        for some_child in arr {
+                            if some_child.is_some() {
+                                let child = some_child.unwrap();
+                                if child == hash_child {
+                                    root = child;
+                                    // skip one nibble in the current key for branch nodes.
+                                    key_current = key_current.slice(1)?;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -799,6 +815,40 @@ mod tests {
 
         println!("trie {:#?}", trie);
         // assert!(false);
+    }
+
+    #[test]
+    pub fn test_trie_load_proof_branch_null_value_key() {
+        let mut trie = Trie::<u64, u64>::new();
+
+        trie.load_proof(
+            5,
+            0,
+            vec!["0xf85180808080a015503e91f9250654cf72906e38a7cb14c3f1cc06658379d37f0c5b5c32482880808080808080a0f4984a11f61a2921456141df88de6e1a710d28681b91af794c5a721e47839cd78080808080"
+                    .parse()
+                    .unwrap()],
+        )
+        .unwrap();
+
+        assert_eq!(trie.get(5).unwrap(), 0);
+    }
+
+    #[test]
+    pub fn test_trie_load_proof_leaf_null_value_key() {
+        let mut trie = Trie::<u64, u64>::new();
+
+        trie.load_proof(
+            5,
+            0,
+            vec![
+                "0xe3a120b10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf601"
+                    .parse()
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(trie.get(5).unwrap(), 0);
     }
 
     #[test]
