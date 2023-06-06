@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::{
     nibbles::Nibbles,
     nodes::LeafValue,
@@ -42,7 +44,7 @@ impl AccountTrie {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AccountData {
     pub nonce: U256,
     pub balance: U256,
@@ -69,6 +71,23 @@ impl LeafValue for AccountData {
         rlp_stream.append(&self.storage_root);
         rlp_stream.append(&self.code_hash);
         Ok(Bytes::from(rlp_stream.out().to_vec()))
+    }
+}
+
+impl Default for AccountData {
+    fn default() -> Self {
+        Self {
+            nonce: U256::zero(),
+            balance: U256::zero(),
+            storage_root: H256::from_str(
+                "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+            )
+            .unwrap(),
+            code_hash: H256::from_str(
+                "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            )
+            .unwrap(),
+        }
     }
 }
 
