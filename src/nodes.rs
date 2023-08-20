@@ -21,14 +21,10 @@ pub trait LeafValue: Clone + Debug + Default + PartialEq {
     fn to_raw_rlp(&self) -> Result<Bytes, Error>;
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Default, Debug, PartialEq)]
 pub struct Nodes<V: LeafValue>(HashMap<H256, NodeData<V>>);
 
 impl<V: LeafValue> Nodes<V> {
-    pub fn new() -> Self {
-        Self(HashMap::new())
-    }
-
     pub fn get(&self, hash: &H256) -> Option<&NodeData<V>> {
         self.0.get(hash)
     }
@@ -101,9 +97,9 @@ impl<V: LeafValue> Nodes<V> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq)]
 pub enum NodeData<V: LeafValue> {
-    // Unknown,
     Leaf { key: Nibbles, value: V },
     Branch([Option<H256>; 17]),
     Extension { key: Nibbles, node: H256 },
@@ -119,26 +115,17 @@ where
 
     #[allow(dead_code)]
     pub fn is_leaf(&self) -> bool {
-        match self {
-            NodeData::Leaf { .. } => true,
-            _ => false,
-        }
+        matches!(self, NodeData::Leaf { .. })
     }
 
     #[allow(dead_code)]
     pub fn is_branch(&self) -> bool {
-        match self {
-            NodeData::Branch(_) => true,
-            _ => false,
-        }
+        matches!(self, NodeData::Branch(_))
     }
 
     #[allow(dead_code)]
     pub fn is_extension(&self) -> bool {
-        match self {
-            NodeData::Extension { .. } => true,
-            _ => false,
-        }
+        matches!(self, NodeData::Extension { .. })
     }
 
     pub fn get_branch_arr(&self) -> Option<[Option<H256>; 17]> {
@@ -161,6 +148,7 @@ where
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
     pub fn from_raw_rlp(raw: Bytes) -> Result<Self, Error> {
         let rlp = Rlp::new(&raw);
         let num_items = rlp.item_count()?;
@@ -256,7 +244,7 @@ where
                         if let Some(node) = node {
                             format!("{:?}", node)
                         } else {
-                            format!("None")
+                            "None".to_string()
                         }
                     })
                     .collect::<Vec<_>>()
@@ -277,7 +265,7 @@ impl LeafValue for u64 {
         if arr.len() <= 8 {
             let mut val: u64 = 0;
             for byte in arr.iter() {
-                val = val << 8;
+                val <<= 8;
                 val += *byte as u64;
             }
             Ok(val)
@@ -290,12 +278,12 @@ impl LeafValue for u64 {
         let mut vec = Vec::<u8>::new();
         let mut flag = false;
         for i in (0..8).rev() {
-            let val = (self >> i * 8) & 0xff;
+            let val = (self >> (i * 8)) & 0xff;
             if val > 0 {
                 flag = true
             }
             if flag {
-                vec.push(((self >> i * 8) & 0xff).try_into().unwrap());
+                vec.push(((self >> (i * 8)) & 0xff).try_into().unwrap());
             }
         }
         let mut rlp_stream = RlpStream::default();

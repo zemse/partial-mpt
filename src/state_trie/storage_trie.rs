@@ -40,7 +40,7 @@ impl LeafValue for U256 {
             return Ok(Bytes::from(vec![0]));
         }
 
-        let mut vec = H256::from_uint(&self).as_bytes().to_vec();
+        let mut vec = H256::from_uint(self).as_bytes().to_vec();
         loop {
             if vec[0] == 0 {
                 vec.remove(0);

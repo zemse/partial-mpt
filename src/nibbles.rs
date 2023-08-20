@@ -2,7 +2,7 @@ use crate::Error;
 use ethers::types::Bytes;
 use std::fmt;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct Nibbles(Vec<u8>);
 
 fn u8_to_u4_vec(u8_vec: Vec<u8>) -> Vec<u8> {
@@ -145,11 +145,11 @@ impl Nibbles {
     pub fn prepend_nibbles(&self, u4_vec: Vec<u8>) -> Result<Self, Error> {
         let self_vec = self.to_u4_vec();
         let mut concat_vec = Vec::new();
-        for i in 0..u4_vec.len() {
-            concat_vec.push(u4_vec[i]);
+        for nibble in u4_vec {
+            concat_vec.push(nibble);
         }
-        for i in 0..self_vec.len() {
-            concat_vec.push(self_vec[i]);
+        for nibble in self_vec {
+            concat_vec.push(nibble);
         }
         Self::from_u4_vec(concat_vec)
     }
@@ -269,7 +269,7 @@ mod tests {
             hex::encode(nibbles.to_raw_path()),
             hex::encode(vec![0x12, 0x34, 0x56])
         );
-        assert_eq!(terminator, true);
+        assert!(terminator);
     }
 
     #[test]
@@ -281,7 +281,7 @@ mod tests {
             hex::encode(nibbles.to_raw_path()),
             hex::encode(Bytes::from(vec![0x12, 0x34, 0x56]))
         );
-        assert_eq!(terminator, false);
+        assert!(!terminator);
     }
 
     #[test]
@@ -293,7 +293,7 @@ mod tests {
             hex::encode(Bytes::from(vec![0x02, 0x34, 0x56]))
         );
         assert_eq!(nibbles.to_u4_vec(), vec![2, 3, 4, 5, 6]);
-        assert_eq!(terminator, false);
+        assert!(!terminator);
     }
 
     #[test]
@@ -305,7 +305,7 @@ mod tests {
             hex::encode(Bytes::from(vec![0x02, 0x34, 0x56]))
         );
         assert_eq!(nibbles.to_u4_vec(), vec![2, 3, 4, 5, 6]);
-        assert_eq!(terminator, true);
+        assert!(terminator);
     }
 
     #[test]

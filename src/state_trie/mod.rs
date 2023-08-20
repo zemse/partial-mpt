@@ -8,24 +8,17 @@ pub use account_trie::{AccountData, AccountTrie};
 mod storage_trie;
 pub use storage_trie::StorageTrie;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StateTrie {
     pub account_trie: AccountTrie,
     storage_tries: HashMap<H256, StorageTrie>,
 }
 
 impl StateTrie {
-    pub fn new() -> Self {
-        StateTrie {
-            account_trie: AccountTrie::new(),
-            storage_tries: HashMap::new(),
-        }
-    }
-
     pub fn from_root(root: H256) -> Self {
         StateTrie {
             account_trie: AccountTrie::from_root(root),
-            storage_tries: HashMap::new(),
+            storage_tries: HashMap::default(),
         }
     }
 
@@ -107,7 +100,7 @@ mod tests {
         // a contract was deployed on geth --dev
         // slot[1] = 2
         // slot[2] = 4
-        let mut trie = StateTrie::new();
+        let mut trie = StateTrie::default();
 
         // contract
         trie.load_proof(EIP1186ProofResponse {

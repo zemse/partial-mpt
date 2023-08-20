@@ -16,7 +16,7 @@ pub trait MptKey: Clone + Debug + PartialEq {
     fn to_nibbles(&self) -> Result<Nibbles, Error>;
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Default, Debug, PartialEq)]
 pub struct Trie<K: MptKey, V: LeafValue> {
     root: Option<H256>,
     nodes: Nodes<V>,
@@ -24,18 +24,10 @@ pub struct Trie<K: MptKey, V: LeafValue> {
 }
 
 impl<K: MptKey, V: LeafValue> Trie<K, V> {
-    pub fn new() -> Self {
-        Trie {
-            root: None,
-            nodes: Nodes::new(),
-            _marker: PhantomData,
-        }
-    }
-
     pub fn from_root(root: H256) -> Self {
         Trie {
             root: Some(root),
-            nodes: Nodes::new(),
+            nodes: Nodes::default(),
             _marker: PhantomData,
         }
     }
@@ -65,7 +57,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
             let node_data = self
                 .nodes
                 .get(&hash_current)
-                .ok_or_else(|| Error::InternalError("node not present, please add a proof"))?;
+                .ok_or(Error::InternalError("node not present, please add a proof"))?;
 
             match node_data {
                 NodeData::Leaf { key, value } => {
@@ -127,7 +119,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
             let current_node = self
                 .nodes
                 .remove(&hash_items.current())
-                .ok_or_else(|| Error::InternalError("node not present, please add a proof"))?;
+                .ok_or(Error::InternalError("node not present, please add a proof"))?;
 
             // update current node if necessary.
             let current_node_updated = match current_node {
@@ -144,13 +136,12 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                         }
                     } else {
                         // otherwise to insert a leaf here, we have to hook both leaves under a branch.
-                        let branch_or_extension = self.nodes.create_branch_or_extension(
+                        self.nodes.create_branch_or_extension(
                             key,
                             value,
                             path_slice,
                             new_value.clone(),
-                        )?;
-                        branch_or_extension
+                        )?
                     }
                 }
                 NodeData::Branch(mut arr) => {
@@ -160,7 +151,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
 
                     if arr[nibble].is_some() {
                         // set next hash for traversing down the branch.
-                        hash_items.set_next(arr[nibble as usize].unwrap())
+                        hash_items.set_next(arr[nibble].unwrap())
                     } else {
                         // create a leaf and assign to the branch.
                         let path_slice = path.slice(i)?;
@@ -196,9 +187,9 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
             // since we are removing the node, re-arrange the trie.
             if let Some(branch_hash) = hash_items.prev() {
                 // we have a branch above us, so let us update that branch.
-                let mut branch_node = self.nodes.remove(&branch_hash).ok_or_else(|| {
-                    Error::InternalError("branch found but still got None somehow")
-                })?;
+                let mut branch_node = self.nodes.remove(branch_hash).ok_or(
+                    Error::InternalError("branch found but still got None somehow"),
+                )?;
                 assert!(branch_node.is_branch());
                 let mut arr = branch_node.get_branch_arr().unwrap();
                 let num_of_nodes_on_branch =
@@ -212,14 +203,26 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                             }
                         },
                     );
-                if num_of_nodes_on_branch > 2 {
+                if arr.iter().fold(
+                    0,
+                    |sum: i32, hash| {
+                        if hash.is_some() {
+                            sum + 1
+                        } else {
+                            sum
+                        }
+                    },
+                ) > 2
+                {
                     // we can simply remove the leaf and stop here.
                     let removal_index = arr
                         .iter()
                         .position(|el| el.is_some() && el.unwrap() == hash_items.current())
-                        .ok_or(Error::InternalError(
-                            "hash not found in parent node, this should ideally not happen",
-                        ))?;
+                        .ok_or({
+                            Error::InternalError(
+                                "hash not found in parent node, this should ideally not happen",
+                            )
+                        })?;
 
                     // update the branch node and save it.
                     arr[removal_index] = None;
@@ -237,7 +240,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
 
                     // we want to remove the branch and put the keep_node in it's place.
                     let keep_hash = arr[keep_index].unwrap();
-                    let keep_node = self.nodes.remove(&keep_hash).ok_or_else(|| {
+                    let keep_node = self.nodes.remove(&keep_hash).ok_or({
                         Error::InternalError("keep node not present, please load_proof for key, TODO display key here")
                     })?;
 
@@ -283,9 +286,12 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         loop {
             if let Some(hash_old_parent) = hash_items.prev() {
                 // we have a parent, so let us update that parent.
-                let parent_node = self.nodes.remove(&hash_old_parent).ok_or_else(|| {
-                    Error::InternalError("parent found but still got None somehow")
-                })?;
+                let parent_node =
+                    self.nodes
+                        .remove(hash_old_parent)
+                        .ok_or(Error::InternalError(
+                            "parent found but still got None somehow",
+                        ))?;
                 let parent_node_updated = match parent_node {
                     NodeData::Leaf { key: _, value: _ } => {
                         // leaf cannot appear as a parent.
@@ -324,8 +330,9 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
         self.set(key, V::default())
     }
 
+    #[allow(clippy::manual_flatten)]
     pub fn load_proof(&mut self, key: K, value: V, proof: Vec<Bytes>) -> Result<(), Error> {
-        if proof.len() == 0 {
+        if proof.is_empty() {
             if self.root.is_some() {
                 if self.root.unwrap() != EMPTY_ROOT_STR.parse().unwrap() {
                     // enforce proof to be empty.
@@ -409,8 +416,7 @@ impl<K: MptKey, V: LeafValue> Trie<K, V> {
                         // find the child node in branch which matches hash_child.
                         let hash_child = H256::from(keccak256(proof[i + 1].clone()));
                         for some_child in arr {
-                            if some_child.is_some() {
-                                let child = some_child.unwrap();
+                            if let Some(child) = some_child {
                                 if child == hash_child {
                                     root = child;
                                     // skip one nibble in the current key for branch nodes.
@@ -482,7 +488,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_new_one_element_1() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path(
@@ -519,7 +525,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_new_two_element_1() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str("0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0" // hash(pad(5))
@@ -594,7 +600,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_new_three_element_1() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -725,7 +731,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_load_two_proofs_1() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -819,7 +825,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_load_proof_branch_null_value_key() {
-        let mut trie = Trie::<u64, u64>::new();
+        let mut trie = Trie::<u64, u64>::default();
 
         trie.load_proof(
             5,
@@ -835,7 +841,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_load_proof_leaf_null_value_key() {
-        let mut trie = Trie::<u64, u64>::new();
+        let mut trie = Trie::<u64, u64>::default();
 
         trie.load_proof(
             5,
@@ -853,7 +859,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_get_1() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -894,7 +900,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_get_2() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -928,7 +934,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_get_3_value_not_proved() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -950,7 +956,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_get_4_empty_value() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -974,7 +980,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_set_1() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str(
@@ -1041,7 +1047,7 @@ mod tests {
 
     #[test]
     pub fn test_trie_insert_new_leaf_on_branch() {
-        let mut trie = Trie::<Nibbles, u64>::new();
+        let mut trie = Trie::<Nibbles, u64>::default();
 
         trie.load_proof(
             Nibbles::from_raw_path_str("0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0"), // hash(pad(5))
@@ -1116,7 +1122,7 @@ mod tests {
     #[test]
     pub fn test_trie_insert_new_leaf_on_leaf_2() {
         // create a trie with 3->3 and then insert 5->5.
-        let mut trie = Trie::<u64, u64>::new();
+        let mut trie = Trie::<u64, u64>::default();
 
         trie.load_proof(
             891,
